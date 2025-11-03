@@ -1,0 +1,22 @@
+[project]
+name = "fairybrowser"
+version = "0.1.0"
+description = "Fairies are whispering"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["pydantic", "psutil", "playwright", "pywin32", "Pillow", "pyautogui", "pynput"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
+
+# pyproject.toml
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --show-capture=no"
+

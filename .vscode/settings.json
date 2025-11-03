@@ -1,0 +1,31 @@
+{
+    // 作業用の推奨 Python インタープリタ（Windows の .venv を想定）
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+    // 言語サーバー
+    "python.languageServer": "Pylance",
+    // フォーマッタ / フォーマット設定
+    "editor.formatOnSave": true,
+    "python.formatting.provider": "black",
+    // リンター: Ruff を有効にする
+    "python.linting.enabled": true,
+    "python.linting.ruffEnabled": true,
+    // Ruff に渡す追加引数（pyproject.toml を明示的に参照する）
+    // Ruff は通常 pyproject.toml を自動検出しますが、明示的に指定すると
+    // CI や複数ワークスペースでの動作が安定します。
+    "python.linting.ruffArgs": [
+        "--config",
+        "${workspaceFolder}/pyproject.toml",
+        "--fix"
+    ],
+    // エディタの表示などのワークスペース設定
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true
+    },
+    // テスト検出（pytest を想定）
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": [
+        "tests"
+    ]
+}
