@@ -77,6 +77,44 @@ This repository contains `.vscode/settings.json`, `.vscode/extensions.json`, and
 
 Prompt examples live in  `.github/prompts/` so they can be discovered by tools that scan repository-scoped metadata. Use the `/.github/prompts/**` glob when referencing them in tooling.
 
+## Devtools: SimpleRequestAnalyzer
+
+The `devtools` helpers collect raw CDP network events and store them as JSON files under a debug folder. `SimpleRequestAnalyzer` reads those logs and converts them into a convenient `SimpleRequest` model which exposes parsed `payload` and `response_json` properties.
+
+Typical usage:
+
+```python
+import json
+from fairybrowser import  sync_page
+from fairybrowser.devtools.collectors import DevtoolsUser
+from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
+
+with sync_page() as page:
+    DevtoolsUser(page, "./debug").start()
+    page.goto("about:blank")
+    test_url = "https://httpbin.org/post"
+    payload = {"foo": "bar", "num": 123}
+    page.evaluate(f'''
+        fetch("{test_url}", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({json.dumps(payload)})
+        }});
+    ''')
+    page.wait_for_timeout(3000)
+requests = SimpleRequestAnalyzer("./debug").get_simple_requests()
+for request in requests:
+    print(request.payload, request.response_json)
+```
+
+Notes:
+
+- `SimpleRequestAnalyzer` accepts the path to the log folder (it will assert the folder exists).
+- It automatically finds JSON files under the folder and under `network/` within the folder.
+- `SimpleRequest.payload` and `SimpleRequest.response_json` attempt to decode JSON bodies; if decoding fails they return the raw text.
+
+I added unit tests for the analyzer in `tests/test_analyzers.py` which validate parsing and filtering by method/path.
+
 ## Development notes and suggestions
 
 - `port_utils.find_available_port` returns a free port but there is an inherent race: another process could bind the port after it is found. Acquire the port quickly after checking or let the OS assign an ephemeral port by binding to `0`.

@@ -26,7 +26,7 @@ def get_page(browser: Browser, pid: int) -> Page | None:
             try:
                 window_info = client.send("Browser.getWindowForTarget")
                 bounds = window_info.get("bounds", {})
-                print(bounds, window_info)
+                #print(bounds, window_info)
             except Exception:
                 # fallback: some browsers (Edge) might not support this
                 try:

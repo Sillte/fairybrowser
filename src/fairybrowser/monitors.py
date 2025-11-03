@@ -10,7 +10,7 @@ from fairybrowser.port_utils import is_port_free
 
 
 _this_folder = Path(__file__).absolute().parent
-_states_folder = _this_folder / "EXTECUTION_STATES"
+_states_folder = _this_folder / "EXECUTION_STATES"
 _states_folder.mkdir(exist_ok=True)
 
 

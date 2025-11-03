@@ -1,7 +1,5 @@
 from playwright.sync_api import Page, BrowserContext, Frame
 from pathlib import Path
-from typing import Any
-from pydantic import BaseModel, JsonValue
 import logging
 import hashlib
 import json 
@@ -11,7 +9,7 @@ import shutil
 import time
 import re
 
-from fairybrowser.devtools.models import RawCommunicationInfo, RawConsoleInfoElem, RawConsoleInfo
+from fairybrowser.devtools.models import RawCommunicationInfo
 
 def _init_folder(folder: Path):
     if folder.exists():
@@ -32,17 +30,6 @@ def _dump_request(request_id: str, com_infos: list[RawCommunicationInfo], output
     stem = _sanitize_or_hash_filename(request_id)
     path = output_folder / f"{stem}.json"
 
-    def _to_dict_if_possible(arg: str) -> str | dict[str, JsonValue]:
-        try:
-            return json.loads(arg)
-        except Exception:
-            return arg
-
-    for com_info in com_infos:
-        if isinstance(com_info.payload, str):
-            com_info.payload = _to_dict_if_possible(com_info.payload)
-        if isinstance(com_info.body, str):
-            com_info.body = _to_dict_if_possible(com_info.body)
 
     data = [elem.model_dump() for elem in com_infos]
     path.write_text(json.dumps(data, indent=4, ensure_ascii=False))
@@ -82,7 +69,13 @@ class DevtoolsUser:
             method = request["method"]
             url = request["url"]
             headers = request.get("headers", {})
-            payload = request.get("postData")
+            post_data = request.get("postData")
+            if isinstance(post_data, str):
+                request_body = post_data.encode("utf-8")  # str -> bytes
+            elif post_data is None:
+                request_body = None
+            else:
+                request_body = bytes(post_data)  # 万が一 bytes ならそのまま
 
             if "redirectResponse" in params:
                 resp = params["redirectResponse"]
@@ -94,8 +87,8 @@ class DevtoolsUser:
                     timing=resp.get("timing"),
                     request_headers=headers,
                     response_headers=resp.get("headers"),
-                    payload=payload,
-                    body=None
+                    request_body=request_body,
+                    response_body=None
                 ))
                 redirect_map[request_id] = prev_chain
 
@@ -104,7 +97,8 @@ class DevtoolsUser:
                 url=url,
                 method=method,
                 request_headers=headers,
-                payload=payload
+                request_body=request_body, 
+                response_headers={}, 
             ))
             redirect_map[request_id] = chain
 
@@ -123,18 +117,14 @@ class DevtoolsUser:
             if chain:
                 try:
                     body_resp = client.send("Network.getResponseBody", {"requestId": request_id})
-                    body = body_resp.get("body", "")
+                    body = body_resp.get("body", b"")
                     if body_resp.get("base64Encoded", False):
-                        body_bytes = base64.b64decode(body)
-                        try:
-                            body_str = body_bytes.decode()
-                            chain[-1].body = body_str
-                        except UnicodeDecodeError:
-                            chain[-1].body = body_bytes
+                        chain[-1].response_body = base64.b64decode(body)
                     else:
-                        chain[-1].body = body
+                        # plain textの場合も bytes に統一
+                        chain[-1].response_body = body.encode("utf-8") if isinstance(body, str) else body
                 except Exception:
-                    chain[-1].body = "<not available>"
+                    chain[-1].response_body = b"<not available>"
 
                 _dump_request(request_id, chain, network_folder)
                 del redirect_map[request_id]

@@ -1,24 +1,11 @@
-from playwright.sync_api import Page, BrowserContext, Frame
-from pathlib import Path
-from typing import Any
-from pydantic import BaseModel, JsonValue
-import logging
-import hashlib
-import json 
-import base64
-import datetime
-import shutil
-import time
-import re
-
-from fairybrowser.devtools.models import RawCommunicationInfo, RawConsoleInfoElem, RawConsoleInfo
 from fairybrowser.devtools.collectors import DevtoolsUser
+from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
 
 
 if __name__ == "__main__":
     from fairybrowser import  sync_page
     with sync_page() as page:
-        DevtoolsUser(page).start()
+        DevtoolsUser(page, "./debug").start()
         page.goto("about:blank")
         test_url = "https://httpbin.org/post"
         payload = {"foo": "bar", "num": 123}
@@ -29,4 +16,8 @@ if __name__ == "__main__":
                 body: JSON.stringify({json.dumps(payload)})
             }});
         ''')
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(3000)
+    requests = SimpleRequestAnalyzer("./debug").get_simple_requests()
+    for request in requests:
+        print(request.payload, request.response_json)
+
