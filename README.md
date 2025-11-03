@@ -69,14 +69,6 @@ with runners.sync_browser(info) as browser:
 
 If you prefer a singleton-style Playwright instance (module-scoped) or different lifecycle handling, see `runners.sync_browser` implementation and consider swapping the approach to a long-lived Playwright instance.
 
-## VS Code configuration
-
-This repository contains `.vscode/settings.json`, `.vscode/extensions.json`, and `.vscode/launch.json`. These provide recommended extensions (Python, Pylance, Ruff, Black), format-on-save, and a debug configuration for running pytest or the current Python file.
-
-## Prompts for Copilot / Assistant
-
-Prompt examples live in  `.github/prompts/` so they can be discovered by tools that scan repository-scoped metadata. Use the `/.github/prompts/**` glob when referencing them in tooling.
-
 ## Devtools: SimpleRequestAnalyzer
 
 The `devtools` helpers collect raw CDP network events and store them as JSON files under a debug folder. `SimpleRequestAnalyzer` reads those logs and converts them into a convenient `SimpleRequest` model which exposes parsed `payload` and `response_json` properties.
@@ -115,15 +107,6 @@ Notes:
 
 I added unit tests for the analyzer in `tests/test_analyzers.py` which validate parsing and filtering by method/path.
 
-## Development notes and suggestions
-
-- `port_utils.find_available_port` returns a free port but there is an inherent race: another process could bind the port after it is found. Acquire the port quickly after checking or let the OS assign an ephemeral port by binding to `0`.
-- `monitors.is_pid_alive` uses `psutil.pid_exists` for portability. On Windows it falls back to a permissive approach if permissions prevent checking.
-- `runners._run_chromium` currently starts Chromium via `subprocess.Popen` and saves the PID using `ExecutionInfo`. Consider managing process groups and stdout/stderr redirection for production usage.
-
-## CI (suggestion)
-
-I can add a GitHub Actions workflow to run tests and linting on push/PR. Suggested path: `.github/workflows/python-ci.yml` with steps to set up Python, install deps, run `pytest`, and optionally run `ruff`.
 
 
 ## License

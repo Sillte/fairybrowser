@@ -19,4 +19,5 @@ dev = [
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q --show-capture=no"
+testpaths = ["tests"]
 

@@ -1,3 +1,4 @@
+import json
 from fairybrowser.devtools.collectors import DevtoolsUser
 from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
 

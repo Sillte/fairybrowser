@@ -6,6 +6,7 @@ from fairybrowser.devtools.models import RawCommunicationInfo
 
 def _write_raw_list(path: Path, raw_list: list[RawCommunicationInfo]):
     data = [elem.model_dump() for elem in raw_list]
+    print("data", data)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
 

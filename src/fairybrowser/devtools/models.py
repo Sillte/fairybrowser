@@ -1,7 +1,45 @@
-from typing import Any, Annotated
-from pydantic import BaseModel, JsonValue, Field, PrivateAttr
-import json
 import base64
+import json
+from typing import Any
+from typing import Annotated
+from pydantic import (
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    JsonValue,
+    PrivateAttr,
+)
+
+
+def _utf8_decode_or_none(data: bytes) -> str | None:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _encode_body_for_json(body: bytes | None) -> str | dict[str, str] | None:
+    if body is None:
+        return None
+    if text := _utf8_decode_or_none(body):
+        return text
+    return {
+        "type": "bytes",
+        "data": base64.b64encode(body).decode("ascii"),
+    }
+
+
+def _decode_body_from_json(value: Any) -> bytes | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    if isinstance(value, dict) and value.get("type") == "bytes" and "data" in value:
+        return base64.b64decode(value["data"])
+    raise ValueError(f"Invalid body format: {value!r}")
 
 
 class RawCommunicationInfo(BaseModel):
@@ -9,29 +47,19 @@ class RawCommunicationInfo(BaseModel):
     url: str
     method: str
     timing: dict[str, JsonValue] | None = None
-    request_headers: Annotated[dict[str, JsonValue], Field(default_factory=dict)]
-    response_headers: Annotated[dict[str, JsonValue], Field(default_factory=dict)]
+    request_headers: dict[str, JsonValue] = Field(default_factory=dict)
+    response_headers: dict[str, JsonValue] = Field(default_factory=dict)
     request_body: bytes | None = None
     response_body: bytes | None = None
 
-    def model_dump(self, **kwargs):
-        """bytes を自動で Base64 に変換して出力"""
-        d = super().model_dump(**kwargs)
-        if self.request_body is not None:
-            d['request_body'] = base64.b64encode(self.request_body).decode("ascii")
-        if self.response_body is not None:
-            d['response_body'] = base64.b64encode(self.response_body).decode("ascii")
-        return d
-
+    @field_validator("request_body", "response_body", mode="before")
     @classmethod
-    def model_validate(cls, data):
-        """bytes を Base64 から復元"""
-        data = data.copy()
-        if 'request_body' in data and data['request_body'] is not None:
-            data['request_body'] = base64.b64decode(data['request_body'])
-        if 'response_body' in data and data['response_body'] is not None:
-            data['response_body'] = base64.b64decode(data['response_body'])
-        return super().model_validate(data)
+    def _decode_body(cls, v: Any):
+        return _decode_body_from_json(v)
+
+    @field_serializer("request_body", "response_body")
+    def _encode_body(self, v: Any, _):
+        return _encode_body_for_json(v)
 
 
 class SimpleRequest(BaseModel, frozen=True):
@@ -111,8 +139,16 @@ class SimpleRequest(BaseModel, frozen=True):
                     except (ValueError, TypeError):
                         pass
 
-        request_bytes = raw.request_body if isinstance(raw.request_body, bytes) else (raw.request_body or b"")
-        response_bytes = raw.response_body if isinstance(raw.response_body, bytes) else (raw.response_body or b"")
+        request_bytes = (
+            raw.request_body
+            if isinstance(raw.request_body, bytes)
+            else (raw.request_body or b"")
+        )
+        response_bytes = (
+            raw.response_body
+            if isinstance(raw.response_body, bytes)
+            else (raw.response_body or b"")
+        )
 
         return cls(
             status=raw.status,
