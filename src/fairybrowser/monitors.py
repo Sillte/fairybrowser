@@ -17,10 +17,12 @@ _states_folder.mkdir(exist_ok=True)
 def save_state(info: ExecutionInfo) -> None:
     path = _states_folder / f"{info.name}.json"
     path.write_text(info.model_dump_json())
-    
+
+
 def load_state(name: str) -> ExecutionInfo:
     path = _states_folder / f"{name}.json"
     return ExecutionInfo.model_validate_json(path.read_text())
+
 
 def get_execution_infos() -> dict[str, ExecutionInfo]:
     result = {}
@@ -31,6 +33,7 @@ def get_execution_infos() -> dict[str, ExecutionInfo]:
             result[key] = model
     return result
 
+
 def to_browser_info(info: BrowserInfo | str | None = None) -> BrowserInfo:
     if info is None:
         info = BrowserInfo()
@@ -38,7 +41,7 @@ def to_browser_info(info: BrowserInfo | str | None = None) -> BrowserInfo:
         info = BrowserInfo(name=info)
     assert isinstance(info, BrowserInfo)
     return info
-    
+
 
 def get_pid(browser_info: BrowserInfo | str | None = None) -> int | None:
     browser_info = to_browser_info(browser_info)
@@ -68,5 +71,3 @@ def is_existent(name: str) -> bool:
     except Exception:
         return False
     return is_pid_alive(model.pid) and (not is_port_free(model.port))
-
-
