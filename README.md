@@ -56,18 +56,15 @@ High-level helper functions live in `src/fairybrowser/runners.py`.
 Example: start a Chromium instance and connect (programmatic)
 
 ```python
-from fairybrowser import runners
+from fairybrowser import sync_page
 from fairybrowser.models import BrowserInfo
 
-info = BrowserInfo(name="my-fairy", port=None)
+info = BrowserInfo(name="my-fairy")
 # This will start Chromium (if not already running) and return a Playwright Browser connected over CDP
-with runners.sync_browser(info) as browser:
-		page = browser.new_page()
-		page.goto("https://example.com")
-		print(page.title())
+with sync_page(info) as page:
+    page.goto("https://example.com")
+    print(page.title())
 ```
-
-If you prefer a singleton-style Playwright instance (module-scoped) or different lifecycle handling, see `runners.sync_browser` implementation and consider swapping the approach to a long-lived Playwright instance.
 
 ## Devtools: SimpleRequestAnalyzer
 
@@ -77,7 +74,7 @@ Typical usage:
 
 ```python
 import json
-from fairybrowser import  sync_page
+from fairybrowser import sync_page
 from fairybrowser.devtools.collectors import DevtoolsUser
 from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
 

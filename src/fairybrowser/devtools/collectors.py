@@ -8,8 +8,11 @@ import datetime
 import shutil
 import time
 import re
+from typing import Callable
 
 from fairybrowser.devtools.models import RawCommunicationInfo
+from playwright._impl._errors import TargetClosedError
+from asyncio.exceptions import CancelledError
 
 def _init_folder(folder: Path):
     if folder.exists():
@@ -17,6 +20,17 @@ def _init_folder(folder: Path):
         time.sleep(0.05)
     folder.mkdir(parents=True)
 
+def _error_catcher(function: Callable) -> Callable:
+    def _wrapped(*args, **kwargs):
+        try:
+            function(*args, **kwargs)
+        except TargetClosedError as e:
+            print("`TargetClosedError`  is invoked @`fairybrowser.devtools.collectors`", e)
+            raise e
+        except CancelledError as e:
+            print("`asyncio` related... `CancelledError` is invoked @`fairybrowser.devtools.collectors`", e)
+            raise e
+    return _wrapped
     
 
 def _dump_request(request_id: str, com_infos: list[RawCommunicationInfo], output_folder: Path):
@@ -129,9 +143,9 @@ class DevtoolsUser:
                 _dump_request(request_id, chain, network_folder)
                 del redirect_map[request_id]
 
-        client.on("Network.requestWillBeSent", on_request_will_be_sent)
-        client.on("Network.responseReceived", on_response_received)
-        client.on("Network.loadingFinished", on_loading_finished)
+        client.on("Network.requestWillBeSent", _error_catcher(on_request_will_be_sent))
+        client.on("Network.responseReceived", _error_catcher(on_response_received))
+        client.on("Network.loadingFinished", _error_catcher(on_loading_finished))
 
     # ----------------------
     # Console
