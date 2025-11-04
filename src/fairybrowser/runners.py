@@ -1,6 +1,6 @@
-from typing import Iterator
 import time
-from fairybrowser.models import BrowserInfo, BrowserTypeEnum, ExecutionInfo
+from typing import Iterator
+from fairybrowser.models import BrowserInfo, BrowserTypeEnum, ExecutionState
 from fairybrowser.monitors import (
     save_state,
     is_existent,
@@ -9,7 +9,7 @@ from fairybrowser.monitors import (
     to_browser_info,
     get_pid,
 )
-from fairybrowser.port_utils import find_available_port
+from fairybrowser.port_utils import find_available_port, can_connect_port
 from fairybrowser.utils import get_page
 from contextlib import contextmanager
 from playwright.sync_api import sync_playwright, Browser
@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 
 
-def _run_chromium(info: BrowserInfo) -> ExecutionInfo:
+def _run_chromium(info: BrowserInfo) -> ExecutionState:
     """Run chrome-based browser."""
 
     def _get_chromium_path() -> Path:
@@ -37,6 +37,15 @@ def _run_chromium(info: BrowserInfo) -> ExecutionInfo:
                 return p
         raise FileNotFoundError("Microsoft Edge executable not found.")
 
+    def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0):
+        start = time.time()
+        while time.time() - start < timeout:
+            if can_connect_port(port, host):
+                return
+            else:
+                time.sleep(0.1)
+        raise TimeoutError(f"Port {port} did not open within {timeout} seconds.")
+
     start_port = 13456
     if info.type == BrowserTypeEnum.CHROMIUM:
         path = _get_chromium_path()
@@ -45,9 +54,8 @@ def _run_chromium(info: BrowserInfo) -> ExecutionInfo:
         path = _get_edge_path()
         start_port = 18456
 
-    if info.port is None:
-        info.port = find_available_port(start=start_port)
-    assert info.port is not None
+    port = find_available_port(start=start_port)
+    print("port", port)
 
     default_options = [
         "--no-first-run",
@@ -62,66 +70,59 @@ def _run_chromium(info: BrowserInfo) -> ExecutionInfo:
         raise ValueError("`info.type` is invalid.")
 
     options = [
-        f"--remote-debugging-port={info.port}",
+        f"--remote-debugging-port={port}",
         f"--user-data-dir={user_dir}",
         *default_options,
     ]
 
     proc = subprocess.Popen([str(path), *options])
+    time.sleep(0.1)  # Chromium群が立ち上がり始める時間
     pid = proc.pid
-    assert info.port is not None
-    execution_info = ExecutionInfo(
-        name=info.name, pid=pid, type=info.type, port=info.port
-    )
+    execution_info = ExecutionState(name=info.name, pid=pid, type=info.type, port=port)
     save_state(execution_info)
+    _wait_for_port(port)
 
     return execution_info
+
+
+def _to_apt_execution_state(browser_info: BrowserInfo | str | None = None) -> ExecutionState:
+    execs = get_execution_infos()
+    if browser_info is not None:
+        browser_info = to_browser_info(browser_info)
+        if is_existent(browser_info):
+            state = load_state(browser_info)
+        else:
+            state = _run(browser_info)
+    else:
+        # If not specified, we would like to acquire the one of active ones.
+        execs = get_execution_infos()
+        if not execs:
+            state = _run(info=None)
+        else:
+            state = list(execs.values())[0]
+    return state
 
 
 @contextmanager
 def sync_browser(info: BrowserInfo | str | None = None) -> Iterator[Browser]:
     """Get `playwright.sync_api.Browser with the context."""
-
-    info = to_browser_info(info)
-
-    if not is_existent(info.name):
-        execution_info = _run(info)
-    execution_info = load_state(info.name)
-
-    if execution_info.type != info.type:
-        raise ValueError("Inconsistency of name and type (e.g. Edge / Chromium).")
-
+    state = _to_apt_execution_state(info)
     with sync_playwright() as playwright:
-        browser = _fetch_browser(playwright, execution_info.port, info.type)
+        browser = _fetch_browser(playwright, state.port, state.type)
         yield browser
 
 
 @contextmanager
 def sync_page(browser_info: BrowserInfo | str | None = None) -> Iterator[Page]:
     """Acquire the `page`, based on the given information."""
-    execs = get_execution_infos()
-    if not browser_info:
-        execs = [
-            elem
-            for elem in execs
-            if elem.name == browser_info.name and elem.type == browser_info.type
-        ]
-
-    if not execs:
-        target = _run(browser_info)
-    else:
-        target = list(execs.values())[0]
-    port = target.port
-    pid = target.pid
-    type = target.type
-
+    state = _to_apt_execution_state(browser_info)
     with sync_playwright() as playwright:
-        browser = _fetch_browser(playwright, port=port, type=type)
-        page = get_page(browser, pid)
+        browser = _fetch_browser(playwright, port=state.port, type=state.type)
+        page = get_page(browser, state.pid)
         if page is not None:
             yield page
         else:
-            print("Cannot identify the appropriate `browser`.", flush=True)
+            print("Cannot identify the appropriate `page`.", flush=True)
             print("Fallback is applied.", flush=True)
             yield browser.new_page()
 
@@ -133,7 +134,7 @@ def _fetch_browser(playwright: Playwright, port: int, type: str) -> Browser:
     return browser
 
 
-def _run(info: BrowserInfo | str | None = None) -> ExecutionInfo:
+def _run(info: BrowserInfo | str | None = None) -> ExecutionState:
     info = to_browser_info(info)
 
     if info.type in {BrowserTypeEnum.CHROMIUM, BrowserTypeEnum.EDGE}:

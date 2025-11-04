@@ -10,15 +10,22 @@ class BrowserTypeEnum(str, Enum):
         return str(self.value)
 
 
-class BrowserInfo(BaseModel):
+class BrowserInfo(BaseModel, frozen=True):
     name: str = "default_fairy"
-    type: str = BrowserTypeEnum.CHROMIUM
-    port: int | None = None
+    type: BrowserTypeEnum = BrowserTypeEnum.CHROMIUM
     run_args: str | list[str] | None = None
 
+    def __hash__(self):
+        return hash((self.name, self.type))
 
-class ExecutionInfo(BaseModel, frozen=True):
+    def __eq__(self, other):
+        if not isinstance(other, BrowserInfo):
+            return NotImplemented
+        return (self.name, self.type) == (other.name, other.type)
+
+
+class ExecutionState(BaseModel, frozen=True):
     name: str
-    type: str
+    type: BrowserTypeEnum
     port: int
     pid: int

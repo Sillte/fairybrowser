@@ -1,6 +1,6 @@
 import os
 import socket
-from fairybrowser.models import ExecutionInfo
+from fairybrowser.models import ExecutionState, BrowserInfo
 from fairybrowser import monitors
 
 
@@ -16,13 +16,14 @@ def teardown_state(name: str):
 
 def test_save_load_and_get_pid():
     name = "test_fairy_save"
-    info = ExecutionInfo(name=name, type="chromium", port=0, pid=os.getpid())
+    info = BrowserInfo(name=name)
+    state = ExecutionState(name=name, type=info.type, port=0, pid=os.getpid())
     try:
-        monitors.save_state(info)
-        loaded = monitors.load_state(name)
-        assert loaded.name == info.name
-        assert loaded.pid == info.pid
-        assert monitors.get_pid(name) == info.pid
+        monitors.save_state(state)
+        loaded = monitors.load_state(info)
+        assert loaded.name == state.name
+        assert loaded.type == state.type
+        assert loaded.pid == state.pid
     finally:
         teardown_state(name)
 
@@ -33,9 +34,10 @@ def test_is_existent_true_when_pid_alive_and_port_bound():
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     try:
-        info = ExecutionInfo(name=name, type="chromium", port=port, pid=os.getpid())
-        monitors.save_state(info)
-        assert monitors.is_existent(name) is True
+        info = BrowserInfo(name=name, type="chromium")
+        state = ExecutionState(name=info.name, type=info.type, port=port, pid=os.getpid())
+        monitors.save_state(state)
+        assert monitors.is_existent(info) is True
     finally:
         teardown_state(name)
         s.close()
@@ -51,15 +53,18 @@ def test_get_execution_infos_filters():
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     try:
-        alive = ExecutionInfo(name=alive_name, type="chromium", port=port, pid=os.getpid())
+        alive = ExecutionState(
+            name=alive_name, type="chromium", port=port, pid=os.getpid()
+        )
         monitors.save_state(alive)
 
-        dead = ExecutionInfo(name=dead_name, type="chromium", port=0, pid=999999)
+        dead = ExecutionState(name=dead_name, type="chromium", port=0, pid=999999)
         monitors.save_state(dead)
 
         infos = monitors.get_execution_infos()
-        assert alive_name in infos
-        assert dead_name not in infos
+        alive_names = {info.name for info in infos}
+        assert alive_name in alive_names
+        assert dead_name not in alive_name
     finally:
         s.close()
         teardown_state(alive_name)

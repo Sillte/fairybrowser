@@ -1,11 +1,8 @@
 from pathlib import Path
-import json
-import os
 import psutil
 
 
-from playwright.sync_api import BrowserContext
-from fairybrowser.models import BrowserInfo, ExecutionInfo
+from fairybrowser.models import BrowserInfo, ExecutionState, BrowserTypeEnum
 from fairybrowser.port_utils import is_port_free
 
 
@@ -14,27 +11,57 @@ _states_folder = _this_folder / "EXECUTION_STATES"
 _states_folder.mkdir(exist_ok=True)
 
 
-def save_state(info: ExecutionInfo) -> None:
-    path = _states_folder / f"{info.name}.json"
-    path.write_text(info.model_dump_json())
+def _to_type_folder(type: BrowserTypeEnum) -> Path:
+    return _states_folder / type
 
 
-def load_state(name: str) -> ExecutionInfo:
-    path = _states_folder / f"{name}.json"
-    return ExecutionInfo.model_validate_json(path.read_text())
+def _to_json_path(name: str, type: BrowserTypeEnum) -> Path:
+    return _to_type_folder(type) / f"{name}.json"
 
 
-def get_execution_infos() -> dict[str, ExecutionInfo]:
+def save_state(state: ExecutionState) -> None:
+    path = _to_json_path(state.name, state.type)
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(state.model_dump_json())
+
+
+def load_state(info: BrowserInfo) -> ExecutionState:
+    path = _to_json_path(info.name, info.type)
+    return ExecutionState.model_validate_json(path.read_text())
+
+
+def is_existent(info: BrowserInfo) -> bool:
+    path = _to_json_path(info.name, info.type)
+    if not path.exists():
+        return False
+    try:
+        model = ExecutionState.model_validate_json(path.read_text())
+    except Exception:
+        path.unlink()
+        return False
+    result = is_pid_alive(model.pid) and (not is_port_free(model.port))
+    if not result:
+        path.unlink()
+    return result
+
+
+def get_execution_infos() -> dict[BrowserInfo, ExecutionState]:
     result = {}
-    for path in _states_folder.glob("*.json"):
-        key = path.stem
-        model = ExecutionInfo.model_validate_json(path.read_text())
+    for path in _states_folder.glob("*/*.json"):
+        type = path.parent.stem
+        name = path.stem
+        type_enum = BrowserTypeEnum(type)  # More thorough check is desired.
+        info = BrowserInfo(name=name, type=type_enum)
+        model = ExecutionState.model_validate_json(path.read_text())
         if is_pid_alive(model.pid) and (not is_port_free(model.port)):
-            result[key] = model
+            result[info] = model
+        else:
+            path.unlink()
     return result
 
 
 def to_browser_info(info: BrowserInfo | str | None = None) -> BrowserInfo:
+    """To browser_info. If `str` is given, it is regarded as the name."""
     if info is None:
         info = BrowserInfo()
     elif isinstance(info, str):
@@ -45,10 +72,10 @@ def to_browser_info(info: BrowserInfo | str | None = None) -> BrowserInfo:
 
 def get_pid(browser_info: BrowserInfo | str | None = None) -> int | None:
     browser_info = to_browser_info(browser_info)
-    for path in _states_folder.glob("*.json"):
-        data = json.loads(path.read_text())
-        if data["name"] == browser_info.name:
-            return data["pid"]
+    pair_to_info = get_execution_infos()
+    for _, info in pair_to_info.items():
+        if info.name == browser_info.name and info.type == browser_info.type:
+            return info.pid
     return None
 
 
@@ -60,14 +87,3 @@ def is_pid_alive(pid: int) -> bool:
     except Exception:
         # アクセス権限がない場合は True とする
         return True
-
-
-def is_existent(name: str) -> bool:
-    path = _states_folder / f"{name}.json"
-    if not path.exists():
-        return False
-    try:
-        model = ExecutionInfo.model_validate_json(path.read_text())
-    except Exception:
-        return False
-    return is_pid_alive(model.pid) and (not is_port_free(model.port))

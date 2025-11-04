@@ -33,6 +33,17 @@ def is_port_free(port: int, host: str = "127.0.0.1") -> bool:
             return False
 
 
+def can_connect_port(port: int, host: str = "127.0.0.1") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        try:
+            s.connect((host, port))
+            return True  # 接続成功
+        except (ConnectionRefusedError, socket.timeout):
+            return False
+    return False
+
+
 def find_available_port(
     preferred: Optional[Iterable[int]] = None,
     *,
