@@ -17,24 +17,24 @@ def get_page(browser: Browser, pid: int) -> Page | None:
     infos = [info for info in os_infos if info.pid in descendant_pids]  
     if not infos:
         return None
-    target_info = infos[0]
-    window_title = target_info.title
 
-    for context in browser.contexts:
-        for page in context.pages:
-            client = context.new_cdp_session(page)
-            try:
-                window_info = client.send("Browser.getWindowForTarget")
-                bounds = window_info.get("bounds", {})
-                #print(bounds, window_info)
-            except Exception:
-                # fallback: some browsers (Edge) might not support this
+    for target_info in infos:
+        window_title = target_info.title
+        for context in browser.contexts:
+            for page in context.pages:
+                client = context.new_cdp_session(page)
                 try:
-                    targets = client.send("Target.getTargets")["targetInfos"]
-                    bounds = {"windowState": "normal"} if targets else {}
+                    window_info = client.send("Browser.getWindowForTarget")
+                    bounds = window_info.get("bounds", {})
+                    #print(bounds, window_info)
                 except Exception:
-                    continue
+                    # fallback: some browsers (Edge) might not support this
+                    try:
+                        targets = client.send("Target.getTargets")["targetInfos"]
+                        bounds = {"windowState": "normal"} if targets else {}
+                    except Exception:
+                        continue
 
-            if bounds.get("windowState") in {"normal", "maximized"} and window_title.startswith(page.title()):
-                return page
+                if bounds.get("windowState") in {"normal", "maximized"} and window_title.startswith(page.title()):
+                    return page
     return None
