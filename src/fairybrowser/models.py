@@ -1,18 +1,17 @@
 from pydantic import BaseModel
 from enum import Enum
+from typing import Literal
 
 
-class BrowserTypeEnum(str, Enum):
-    CHROMIUM = "chromium"
-    EDGE = "edge"
-
-    def __str__(self) -> str:
-        return str(self.value)
+BrowserType = Literal["chromium", "edge"]
+SpawnType = Literal["webdriver", "popen"]
 
 
 class BrowserInfo(BaseModel, frozen=True):
     name: str = "default_fairy"
-    type: BrowserTypeEnum = BrowserTypeEnum.CHROMIUM
+    type: BrowserType = "chromium"
+    spawn: SpawnType = "webdriver"
+
     run_args: str | list[str] | None = None
 
     def __hash__(self):
@@ -26,6 +25,6 @@ class BrowserInfo(BaseModel, frozen=True):
 
 class ExecutionState(BaseModel, frozen=True):
     name: str
-    type: BrowserTypeEnum
+    type: BrowserType
     port: int
     pid: int

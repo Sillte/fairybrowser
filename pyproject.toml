@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Fairies are whispering"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["pydantic", "psutil", "playwright", "pywin32", "Pillow", "pyautogui", "pynput"]
+dependencies = ["pydantic", "psutil", "playwright", "pywin32", "Pillow", "pyautogui", "pynput", "selenium"]
 
 [build-system]
 requires = ["hatchling"]
@@ -13,6 +13,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
+    "ruff", 
 ]
 
 # pyproject.toml

@@ -1,8 +1,10 @@
 from pathlib import Path
 import psutil
+import urllib.request
+import json
 
 
-from fairybrowser.models import BrowserInfo, ExecutionState, BrowserTypeEnum
+from fairybrowser.models import BrowserInfo, ExecutionState, BrowserType
 from fairybrowser.port_utils import is_port_free
 
 
@@ -11,11 +13,11 @@ _states_folder = _this_folder / "EXECUTION_STATES"
 _states_folder.mkdir(exist_ok=True)
 
 
-def _to_type_folder(type: BrowserTypeEnum) -> Path:
+def _to_type_folder(type: BrowserType) -> Path:
     return _states_folder / type
 
 
-def _to_json_path(name: str, type: BrowserTypeEnum) -> Path:
+def _to_json_path(name: str, type: BrowserType) -> Path:
     return _to_type_folder(type) / f"{name}.json"
 
 
@@ -30,6 +32,14 @@ def load_state(info: BrowserInfo) -> ExecutionState:
     return ExecutionState.model_validate_json(path.read_text())
 
 
+def _is_alive(execution_state: ExecutionState) -> bool:
+    return (
+        is_pid_alive(execution_state.pid)
+        and (not is_port_free(execution_state.port))
+        and _is_browser_fetchable(execution_state.port)
+    )
+
+
 def is_existent(info: BrowserInfo) -> bool:
     path = _to_json_path(info.name, info.type)
     if not path.exists():
@@ -39,10 +49,11 @@ def is_existent(info: BrowserInfo) -> bool:
     except Exception:
         path.unlink()
         return False
-    result = is_pid_alive(model.pid) and (not is_port_free(model.port))
-    if not result:
+    if _is_alive(model):
+        return True
+    else:
         path.unlink()
-    return result
+        return False
 
 
 def get_execution_infos() -> dict[BrowserInfo, ExecutionState]:
@@ -50,10 +61,9 @@ def get_execution_infos() -> dict[BrowserInfo, ExecutionState]:
     for path in _states_folder.glob("*/*.json"):
         type = path.parent.stem
         name = path.stem
-        type_enum = BrowserTypeEnum(type)  # More thorough check is desired.
-        info = BrowserInfo(name=name, type=type_enum)
+        info = BrowserInfo(name=name, type=type)
         model = ExecutionState.model_validate_json(path.read_text())
-        if is_pid_alive(model.pid) and (not is_port_free(model.port)):
+        if _is_alive(model):
             result[info] = model
         else:
             path.unlink()
@@ -87,3 +97,15 @@ def is_pid_alive(pid: int) -> bool:
     except Exception:
         # アクセス権限がない場合は True とする
         return True
+
+
+def _is_browser_fetchable(port: int):
+    url = f"http://127.0.0.1:{port}/json/version"
+    try:
+        with urllib.request.urlopen(url, timeout=1.0) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode())
+    except Exception as e:
+        print("Debug for Exception in `_is_browser_fetchable.`")
+        return False
+    return True
