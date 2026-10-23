@@ -68,7 +68,7 @@ with sync_page(info) as page:
 
 ## Devtools: SimpleRequestAnalyzer
 
-The `devtools` helpers collect raw CDP network events and store them as JSON files under a debug folder. `SimpleRequestAnalyzer` reads those logs and converts them into a convenient `SimpleRequest` model which exposes parsed `payload` and `response_json` properties.
+The `devtools` helpers collect CDP network events and store them under a debug folder. HTTP requests are saved as JSON files; EventSource messages, fetch response chunks, and WebSocket lifecycle/frame events are appended as JSON Lines to `network/event_stream.jsonl`, `network/fetch_stream.jsonl`, and `network/websocket.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `SimpleRequestAnalyzer` reads the HTTP logs and converts them into a convenient `SimpleRequest` model which exposes parsed `payload` and `response_json` properties.
 
 Typical usage:
 

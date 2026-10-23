@@ -1,3 +1,4 @@
+import psutil
 import time
 import re
 from typing import Iterator
@@ -20,6 +21,7 @@ from playwright.sync_api import Playwright, Page
 import subprocess
 from pathlib import Path
 
+
 def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0):
     start = time.time()
     while time.time() - start < timeout:
@@ -29,23 +31,37 @@ def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0):
             time.sleep(0.1)
     raise TimeoutError(f"Port {port} did not open within {timeout} seconds.")
 
-def _get_browser_pid_by_debug_port(port: int) -> int:
-    # wmic を使ってコマンドライン引数にポート番号が含まれる全プロセスを取得
-    # name, processid, commandline の順に取得
-    try:
-        cmd = f'wmic process where "commandline like \'%--remote-debugging-port={port}%\'" get name, processid, commandline'
-        output = subprocess.check_output(cmd, shell=True).decode(errors='ignore')
-        
-        lines = output.strip().split('\n')
-        for line in lines:
-            if ("chrome.exe" in line.lower() or "msedge.exe" in line.lower()):
-                match = re.search(r'(\d+)\s*$', line.strip())
-                if match:
-                    return int(match.group(1))
-    except Exception as e:
-        raise ValueError(f"PID取得中にエラーが発生しました: {e}") from e
 
-    raise ValueError("No process corresponds toj `--remote-debugging-port`.")
+def _get_browser_pid_by_debug_port(port: int) -> int:
+    target_arg = f"--remote-debugging-port={port}"
+    candidates: list[int] = []
+
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            name = (proc.info["name"] or "").lower()
+            if name not in {"chrome.exe", "msedge.exe"}:
+                continue
+
+            cmdline = proc.info["cmdline"] or []
+            if target_arg not in cmdline:
+                continue
+
+            # Chromium の子プロセスを除外する
+            if any(arg.startswith("--type=") for arg in cmdline):
+                continue
+
+            candidates.append(proc.info["pid"])
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if not candidates:
+        raise ValueError(f"No browser process found for {target_arg}.")
+
+    raise ValueError(f"Multiple browser processes found for {target_arg}: {candidates}")
 
 
 def _run_web_driver(port: int, info: BrowserInfo, options: list[str]) -> ExecutionState:
@@ -54,14 +70,16 @@ def _run_web_driver(port: int, info: BrowserInfo, options: list[str]) -> Executi
 
     if info.type == "edge":
         from selenium.webdriver.edge.options import Options
-        browser_options = Options() 
+
+        browser_options = Options()
         browser_options.add_experimental_option("detach", True)
         for option in options:
             browser_options.add_argument(option)
         driver = webdriver.Edge(options=browser_options)
     elif info.type == "chromium":
         from selenium.webdriver.chrome.options import Options
-        browser_options = Options() 
+
+        browser_options = Options()
         browser_options.add_experimental_option("detach", True)
         for option in options:
             browser_options.add_argument(option)
@@ -84,10 +102,12 @@ def _get_edge_path() -> Path:
             return p
     raise FileNotFoundError("Microsoft Edge executable not found.")
 
+
 def _get_chromium_path() -> Path:
     with sync_playwright() as p:
         chromium_path = p.chromium.executable_path
     return Path(chromium_path)
+
 
 def _run_exe(port: int, info: BrowserInfo, options: list[str]) -> ExecutionState:
     if info.type == "edge":
@@ -124,14 +144,16 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
         "--no-default-browser-check",
         "--disable-infobars",
     ]
-    user_dir = Path.home() / f".config/fairybrowser/{info.type}_{info.spawn}/{info.name}"
+    user_dir = (
+        Path.home() / f".config/fairybrowser/{info.type}_{info.spawn}/{info.name}"
+    )
     options = [
         f"--user-data-dir={user_dir}",
         *default_options,
     ]
     if info.spawn == "webdriver":
         execution_info = _run_web_driver(port, info, options)
-    elif info.spawn =="popen":
+    elif info.spawn == "popen":
         execution_info = _run_exe(port, info, options)
     else:
         raise ValueError("Invalid `BrowserInfo.spawn`.")
@@ -140,8 +162,9 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
     return execution_info
 
 
-
-def _to_apt_execution_state(browser_info: BrowserInfo | str | None = None) -> ExecutionState:
+def _to_apt_execution_state(
+    browser_info: BrowserInfo | str | None = None,
+) -> ExecutionState:
     if browser_info is not None:
         browser_info = to_browser_info(browser_info)
         if is_existent(browser_info):
@@ -190,11 +213,11 @@ def _fetch_browser(playwright: Playwright, port: int, type: BrowserType) -> Brow
     return browser
 
 
-
 if __name__ == "__main__":
     from fairybrowser.utils import get_page
     from fairybrowser.process_utils import to_foreground
     from fairybrowser import BrowserInfo
+
     info = BrowserInfo(type="edge", spawn="webdriver")
     with sync_page(info) as page:
         pid = get_pid(info)

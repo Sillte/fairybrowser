@@ -1,14 +1,14 @@
 import base64
 import json
-from typing import Any
-from typing import Annotated
+from typing import Annotated, Any, Literal
+
 from pydantic import (
     BaseModel,
     Field,
-    field_serializer,
-    field_validator,
     JsonValue,
     PrivateAttr,
+    field_serializer,
+    field_validator,
 )
 
 
@@ -60,6 +60,45 @@ class RawCommunicationInfo(BaseModel):
     @field_serializer("request_body", "response_body")
     def _encode_body(self, v: Any, _):
         return _encode_body_for_json(v)
+
+
+class EventStreamMessage(BaseModel, frozen=True):
+    request_id: str
+    timestamp: float
+    url: str | None = None
+    event_name: str = ""
+    event_id: str = ""
+    data: str
+
+
+class FetchStreamEvent(BaseModel, frozen=True):
+    stream_id: str
+    event_type: Literal["chunk", "complete", "error"]
+    url: str
+    method: str
+    status: int
+    frame_url: str | None = None
+    content_type: str | None = None
+    chunk_index: int
+    timestamp_ms: float
+    elapsed_ms: float
+    data: str = ""
+    error: str | None = None
+
+
+class WebSocketFrame(BaseModel, frozen=True):
+    opcode: int
+    mask: bool
+    payload_data: str
+
+
+class WebSocketEvent(BaseModel, frozen=True):
+    request_id: str
+    event_type: str
+    timestamp: float | None = None
+    url: str | None = None
+    frame: WebSocketFrame | None = None
+    params: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class SimpleRequest(BaseModel, frozen=True):
