@@ -1,12 +1,11 @@
-from pathlib import Path
-import psutil
-import urllib.request
 import json
+import urllib.request
+from pathlib import Path
 
+import psutil
 
-from fairybrowser.models import BrowserInfo, ExecutionState, BrowserType
+from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
 from fairybrowser.port_utils import is_port_free
-
 
 _this_folder = Path(__file__).absolute().parent
 _states_folder = _this_folder / "EXECUTION_STATES"
@@ -61,6 +60,8 @@ def get_execution_infos() -> dict[BrowserInfo, ExecutionState]:
     for path in _states_folder.glob("*/*.json"):
         type = path.parent.stem
         name = path.stem
+        if not (type == "chromium" or type == "edge"):
+            raise ValueError(f"`{type=}` is not appropriate.")
         info = BrowserInfo(name=name, type=type)
         model = ExecutionState.model_validate_json(path.read_text())
         if _is_alive(model):
@@ -104,8 +105,8 @@ def _is_browser_fetchable(port: int):
     try:
         with urllib.request.urlopen(url, timeout=1.0) as response:
             if response.status == 200:
-                data = json.loads(response.read().decode())
-    except Exception as e:
+                json.loads(response.read().decode())
+    except Exception:
         print("Debug for Exception in `_is_browser_fetchable.`")
         return False
     return True

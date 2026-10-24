@@ -1,19 +1,21 @@
 import json
 import time
-import pyautogui
 from pathlib import Path
-from fairybrowser.windows.models import (
-    MouseEventTypeEnum,
-    MouseEvent,
-    MouseClickEvent,
-    MousePlayEventTypeEnum,
-)
+
+import pyautogui
+
 from fairybrowser.process_utils import to_foreground
 from fairybrowser.windows.editors import to_click_events
+from fairybrowser.windows.models import (
+    MouseClickEvent,
+    MouseEvent,
+    MouseEventTypeEnum,
+    MousePlayEventTypeEnum,
+)
 
 
 class MousePlayer:
-    def __init__(self, inputs: str | Path | list):
+    def __init__(self, inputs: str | Path | list[MouseEvent | MouseClickEvent]):
         self.inputs = inputs
         data = inputs
         if isinstance(data, (str, Path)):
@@ -25,15 +27,21 @@ class MousePlayer:
         if isinstance(data, list):
             if isinstance(data[0], dict):
                 if data[0]["type"] in {MouseEventTypeEnum.BUTTON}:
-                    data = [MouseEvent.model_validate(elem) for elem in data]
+                    elems = [MouseEvent.model_validate(elem) for elem in data]
                 elif data[0]["type"] in {MousePlayEventTypeEnum.CLICK}:
-                    data = [MouseClickEvent.model_validate(elem) for elem in data]
+                    elems = [MouseClickEvent.model_validate(elem) for elem in data]
+                else:
+                    raise ValueError("Invalid data", data)
+            elif all(isinstance(elem, (MouseEvent, MouseClickEvent)) for elem in data):
+                elems = data
+            else:
+                raise ValueError("Invalid data", data)
+        else:
+            raise ValueError("Invalid data", data)
 
-            if isinstance(data[0], MouseEvent):
-                data = to_click_events(data)
+        elems = to_click_events(elems)  # type: ignore
 
-        assert all(isinstance(elem, MouseClickEvent) for elem in data)
-        self.events: list[MouseClickEvent] = data
+        self.events: list[MouseClickEvent] = elems
 
     def start(self, speed: float = 1.0, pid: int | None = None):
         """
@@ -66,9 +74,7 @@ class MousePlayer:
         pyautogui.moveTo(event.x0, event.y0, duration=duration)
         pyautogui.mouseDown()
         perturbance_time = max(event.duration, 0.05)
-        pyautogui.moveTo(
-            event.x0 + 1, event.y1 - 1, duration=perturbance_time
-        )  # Perturrbance
+        pyautogui.moveTo(event.x0 + 1, event.y1 - 1, duration=perturbance_time)  # Perturrbance
         pyautogui.moveTo(event.x1, event.y1, duration=0.0001)  # Perturrbance
         pyautogui.mouseUp()
 

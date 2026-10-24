@@ -1,6 +1,5 @@
 from fairybrowser import sync_page
 from fairybrowser.devtools import DevtoolsUser
-from fairybrowser.html_analysis import clean_html
 
 address = "https://chatgpt.com/"
 

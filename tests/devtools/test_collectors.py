@@ -79,10 +79,7 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
     )
 
     event_path = network_folder / "fetch_stream.jsonl"
-    events = [
-        FetchStreamEvent.model_validate_json(line)
-        for line in event_path.read_text().splitlines()
-    ]
+    events = [FetchStreamEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
     assert len(events) == 1
     assert events[0].event_type == "chunk"
     assert events[0].data == "data: hello\\n\\n"
@@ -146,10 +143,7 @@ def test_collects_websocket_lifecycle_and_frames(tmp_path: Path):
     client.emit("Network.webSocketClosed", {"requestId": "ws-1"})
 
     event_path = output_folder / "network" / "websocket.jsonl"
-    events = [
-        WebSocketEvent.model_validate_json(line)
-        for line in event_path.read_text().splitlines()
-    ]
+    events = [WebSocketEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
     assert [event.event_type for event in events] == [
         "created",
         "frame_received",

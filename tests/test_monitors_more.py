@@ -1,10 +1,12 @@
-import os
 import json
+import os
 import socket
-from fairybrowser.models import ExecutionState, BrowserInfo
-from fairybrowser import monitors
-from unittest.mock import patch, MagicMock
+import urllib.error
 from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
+
+from fairybrowser import monitors
+from fairybrowser.models import BrowserInfo, ExecutionState
 
 
 def _state_path(name: str):
@@ -16,17 +18,19 @@ def teardown_state(name: str):
     if p.exists():
         p.unlink()
 
+
 @contextmanager
 def mock_browser_alive(alive_ports: list[int]):
     """
-    Simulate the monitor's 
+    Simulate the monitor's
     """
     target = "fairybrowser.monitors.urllib.request.urlopen"
-    
+
     def side_effect(url, timeout=None):
         # url は文字列（http://127.0.0.1:13456/json/version）として渡されるので
         # ポート番号を抽出する
         import re
+
         match = re.search(r":(\d+)/", url if isinstance(url, str) else url.geturl())
         port = int(match.group(1)) if match else None
 
@@ -86,9 +90,7 @@ def test_get_execution_infos_filters():
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     try:
-        alive = ExecutionState(
-            name=alive_name, type="chromium", port=port, pid=os.getpid()
-        )
+        alive = ExecutionState(name=alive_name, type="chromium", port=port, pid=os.getpid())
         monitors.save_state(alive)
 
         dead = ExecutionState(name=dead_name, type="chromium", port=0, pid=999999)

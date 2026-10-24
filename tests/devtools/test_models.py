@@ -1,12 +1,8 @@
 from fairybrowser.devtools.models import RawCommunicationInfo
 
+
 def test_model_validate_handles_none_base64():
-    data = {
-        "url": "https://example.com",
-        "method": "GET",
-        "request_body": None,
-        "response_body": None
-    }
+    data = {"url": "https://example.com", "method": "GET", "request_body": None, "response_body": None}
 
     instance = RawCommunicationInfo.model_validate(data)
     assert instance.request_body is None
@@ -15,11 +11,7 @@ def test_model_validate_handles_none_base64():
 
 def test_round_trip_dump_then_validate():
     original = RawCommunicationInfo(
-        status=200,
-        url="https://example.com",
-        method="POST",
-        request_body=b'hello world',
-        response_body=b'{"ok": true}'
+        status=200, url="https://example.com", method="POST", request_body=b"hello world", response_body=b'{"ok": true}'
     )
 
     dumped = original.model_dump()
@@ -34,6 +26,3 @@ def test_round_trip_dump_then_validate():
     assert restored.request_headers == original.request_headers
     assert restored.response_headers == original.response_headers
     assert restored.timing == original.timing
-
-
-

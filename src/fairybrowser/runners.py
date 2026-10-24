@@ -1,25 +1,23 @@
-import psutil
+import subprocess
 import time
-import re
-from typing import Iterator
-from fairybrowser.models import BrowserInfo, ExecutionState, BrowserType
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Generator
+
+import psutil
+from playwright.sync_api import Browser, Page, Playwright, sync_playwright
+
+from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
 from fairybrowser.monitors import (
-    save_state,
+    get_execution_infos,
+    get_pid,
     is_existent,
     load_state,
-    get_execution_infos,
+    save_state,
     to_browser_info,
-    get_pid,
 )
-from fairybrowser.port_utils import find_available_port, can_connect_port
+from fairybrowser.port_utils import can_connect_port, find_available_port
 from fairybrowser.utils import get_page
-from contextlib import contextmanager
-from playwright.sync_api import sync_playwright, Browser
-from playwright.sync_api import Playwright, Page
-
-
-import subprocess
-from pathlib import Path
 
 
 def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0):
@@ -75,7 +73,7 @@ def _run_web_driver(port: int, info: BrowserInfo, options: list[str]) -> Executi
         browser_options.add_experimental_option("detach", True)
         for option in options:
             browser_options.add_argument(option)
-        driver = webdriver.Edge(options=browser_options)
+        webdriver.Edge(options=browser_options)
     elif info.type == "chromium":
         from selenium.webdriver.chrome.options import Options
 
@@ -83,7 +81,7 @@ def _run_web_driver(port: int, info: BrowserInfo, options: list[str]) -> Executi
         browser_options.add_experimental_option("detach", True)
         for option in options:
             browser_options.add_argument(option)
-        driver = webdriver.Chrome(options=browser_options)
+        webdriver.Chrome(options=browser_options)
     else:
         raise ValueError("Invalid Type", info)
 
@@ -144,9 +142,7 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
         "--no-default-browser-check",
         "--disable-infobars",
     ]
-    user_dir = (
-        Path.home() / f".config/fairybrowser/{info.type}_{info.spawn}/{info.name}"
-    )
+    user_dir = Path.home() / f".config/fairybrowser/{info.type}_{info.spawn}/{info.name}"
     options = [
         f"--user-data-dir={user_dir}",
         *default_options,
@@ -183,7 +179,7 @@ def _to_apt_execution_state(
 
 
 @contextmanager
-def sync_browser(info: BrowserInfo | str | None = None) -> Iterator[Browser]:
+def sync_browser(info: BrowserInfo | str | None = None) -> Generator[Browser]:
     """Get `playwright.sync_api.Browser with the context."""
     state = _to_apt_execution_state(info)
     with sync_playwright() as playwright:
@@ -192,7 +188,7 @@ def sync_browser(info: BrowserInfo | str | None = None) -> Iterator[Browser]:
 
 
 @contextmanager
-def sync_page(browser_info: BrowserInfo | str | None = None) -> Iterator[Page]:
+def sync_page(browser_info: BrowserInfo | str | None = None) -> Generator[Page]:
     """Acquire the `page`, based on the given information."""
     state = _to_apt_execution_state(browser_info)
     with sync_playwright() as playwright:
@@ -214,9 +210,9 @@ def _fetch_browser(playwright: Playwright, port: int, type: BrowserType) -> Brow
 
 
 if __name__ == "__main__":
-    from fairybrowser.utils import get_page
-    from fairybrowser.process_utils import to_foreground
     from fairybrowser import BrowserInfo
+    from fairybrowser.process_utils import to_foreground
+    from fairybrowser.utils import get_page
 
     info = BrowserInfo(type="edge", spawn="webdriver")
     with sync_page(info) as page:

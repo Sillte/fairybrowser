@@ -1,10 +1,11 @@
 import json
-from fairybrowser.devtools.collectors import DevtoolsUser
-from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
 
+from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
+from fairybrowser.devtools.collectors import DevtoolsUser
 
 if __name__ == "__main__":
-    from fairybrowser import  sync_page
+    from fairybrowser import sync_page
+
     with sync_page() as page:
         DevtoolsUser(page, "./debug").start()
         page.goto("about:blank")
@@ -21,4 +22,3 @@ if __name__ == "__main__":
     requests = SimpleRequestAnalyzer("./debug").get_simple_requests()
     for request in requests:
         print(request.payload, request.response_json)
-

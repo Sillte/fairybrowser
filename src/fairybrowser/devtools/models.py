@@ -173,21 +173,13 @@ class SimpleRequest(BaseModel, frozen=True):
             for key in ("requestTime", "startTime", "sendStart"):
                 if key in raw.timing:
                     try:
-                        time_value = float(raw.timing[key])
+                        time_value = float(raw.timing[key])  # type: ignore
                         break
                     except (ValueError, TypeError):
                         pass
 
-        request_bytes = (
-            raw.request_body
-            if isinstance(raw.request_body, bytes)
-            else (raw.request_body or b"")
-        )
-        response_bytes = (
-            raw.response_body
-            if isinstance(raw.response_body, bytes)
-            else (raw.response_body or b"")
-        )
+        request_bytes = raw.request_body if isinstance(raw.request_body, bytes) else (raw.request_body or b"")
+        response_bytes = raw.response_body if isinstance(raw.response_body, bytes) else (raw.response_body or b"")
 
         return cls(
             status=raw.status,

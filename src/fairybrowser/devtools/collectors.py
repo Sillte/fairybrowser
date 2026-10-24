@@ -113,9 +113,7 @@ def _error_catcher(function: Callable) -> Callable:
         try:
             function(*args, **kwargs)
         except TargetClosedError as e:
-            print(
-                "`TargetClosedError`  is invoked @`fairybrowser.devtools.collectors`", e
-            )
+            print("`TargetClosedError`  is invoked @`fairybrowser.devtools.collectors`", e)
             raise e
         except CancelledError as e:
             print(
@@ -127,9 +125,7 @@ def _error_catcher(function: Callable) -> Callable:
     return _wrapped
 
 
-def _dump_request(
-    request_id: str, com_infos: list[RawCommunicationInfo], output_folder: Path
-):
+def _dump_request(request_id: str, com_infos: list[RawCommunicationInfo], output_folder: Path):
     def _sanitize_or_hash_filename(s: str) -> str:
         sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", s)
         if len(sanitized) > 50:
@@ -178,18 +174,14 @@ class DevtoolsUser:
     def _start_fetch_stream_capture(self):
         if self._fetch_stream_capture_started:
             return
-        self.page.expose_binding(
-            "__fairybrowser_capture_fetch_stream", self._on_fetch_stream_event
-        )
+        self.page.expose_binding("__fairybrowser_capture_fetch_stream", self._on_fetch_stream_event)
         self.page.add_init_script(script=_FETCH_STREAM_CAPTURE_SCRIPT)
         self.page.evaluate(_FETCH_STREAM_CAPTURE_SCRIPT)
         self._fetch_stream_capture_started = True
 
     def _on_fetch_stream_event(self, source: dict[str, Any], payload: dict[str, Any]):
         frame = source.get("frame")
-        event = FetchStreamEvent.model_validate(
-            {**payload, "frame_url": getattr(frame, "url", None)}
-        )
+        event = FetchStreamEvent.model_validate({**payload, "frame_url": getattr(frame, "url", None)})
         path = self.output_folder / "network" / "fetch_stream.jsonl"
         _append_event(path, event)
 
@@ -263,17 +255,13 @@ class DevtoolsUser:
             chain = redirect_map.get(request_id, [])
             if chain:
                 try:
-                    body_resp = client.send(
-                        "Network.getResponseBody", {"requestId": request_id}
-                    )
+                    body_resp = client.send("Network.getResponseBody", {"requestId": request_id})
                     body = body_resp.get("body", b"")
                     if body_resp.get("base64Encoded", False):
                         chain[-1].response_body = base64.b64decode(body)
                     else:
                         # plain textの場合も bytes に統一
-                        chain[-1].response_body = (
-                            body.encode("utf-8") if isinstance(body, str) else body
-                        )
+                        chain[-1].response_body = body.encode("utf-8") if isinstance(body, str) else body
                 except Exception:
                     chain[-1].response_body = b"<not available>"
 

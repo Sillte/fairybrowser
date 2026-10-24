@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+
 from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
 from fairybrowser.devtools.models import RawCommunicationInfo
 
@@ -21,8 +22,8 @@ def test_simple_request_analyzer_basic(tmp_path: Path):
         timing={"requestTime": "1.23"},
         request_headers={"Content-Type": "application/json"},
         response_headers={"Content-Type": "application/json"},
-        request_body=b"{\"foo\": \"bar\", \"num\": 123}",
-        response_body=b"{\"result\": \"ok\"}",
+        request_body=b'{"foo": "bar", "num": 123}',
+        response_body=b'{"result": "ok"}',
     )
 
     file_path = out / "req1.json"
@@ -46,8 +47,24 @@ def test_simple_request_analyzer_filters(tmp_path: Path):
     out = tmp_path / "debug2"
     out.mkdir()
 
-    r1 = RawCommunicationInfo(status=200, url="https://site/a", method="GET", request_headers={}, response_headers={}, request_body=b"", response_body=b"")
-    r2 = RawCommunicationInfo(status=201, url="https://site/b/path", method="POST", request_headers={}, response_headers={}, request_body=b"{}", response_body=b"{}")
+    r1 = RawCommunicationInfo(
+        status=200,
+        url="https://site/a",
+        method="GET",
+        request_headers={},
+        response_headers={},
+        request_body=b"",
+        response_body=b"",
+    )
+    r2 = RawCommunicationInfo(
+        status=201,
+        url="https://site/b/path",
+        method="POST",
+        request_headers={},
+        response_headers={},
+        request_body=b"{}",
+        response_body=b"{}",
+    )
     _write_raw_list(out / "a.json", [r1])
     _write_raw_list(out / "b.json", [r2])
 

@@ -21,10 +21,35 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["pytest>=8.3.5", "ruff"]
+dev = ["pytest>=7.0.0", "ruff>=0.15", "ty", "mypy>=1.14.1", "prek", "pexpect"]
+
 
 # pyproject.toml
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q --show-capture=no"
 testpaths = ["tests"]
+
+
+[tool.ruff]
+fix = true
+line-length = 120
+extend-exclude = ["archives"]
+
+[tool.ruff.lint]
+
+select = ["E", "F", "I"]
+ignore = [
+    "E501", # Exclude specific rule: Line too long
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+
+[tool.ty.rules]
+unused-ignore-comment = "ignore"
+
+[tool.uv]
+exclude-newer = "1 week"
+exclude-newer-package = { pytoy-llm = false }

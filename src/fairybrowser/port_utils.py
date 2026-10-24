@@ -13,8 +13,8 @@ preferred を受け取った場合はそのリストを先に試し、利用可�
 - この関数はローカルでのバインド可否で判断します。瞬間的な競合により、呼び出し後に別プロセスがポートを取得する可能性は残ります。
 """
 
-from typing import Iterable, Optional
 import socket
+from typing import Iterable, Optional
 
 
 def is_port_free(port: int, host: str = "127.0.0.1") -> bool:

@@ -1,20 +1,17 @@
 import json
-from pathlib import Path 
-from pathlib import Path 
-from itertools import chain 
-from fairybrowser.devtools.models import SimpleRequest, RawCommunicationInfo
+from itertools import chain
+from pathlib import Path
+
+from fairybrowser.devtools.models import RawCommunicationInfo, SimpleRequest
+
 
 class SimpleRequestAnalyzer:
     def __init__(self, log_folder: Path | str):
         self.log_folder = Path(log_folder)
         assert self.log_folder.exists()
 
-
-    def get_simple_requests(self,
-                            method: str | None = None, 
-                            path: str | None = None) -> list[SimpleRequest]:
-        """Acquire the simple requests based on the search parapmeters.
-        """
+    def get_simple_requests(self, method: str | None = None, path: str | None = None) -> list[SimpleRequest]:
+        """Acquire the simple requests based on the search parapmeters."""
         raw_infos = self.raw_infos
         simple_requests = [SimpleRequest.from_raw(elem) for elem in raw_infos]
         if method:
@@ -25,10 +22,8 @@ class SimpleRequestAnalyzer:
 
     @property
     def simple_requests(self) -> list[SimpleRequest]:
-        """Acquire all the simple requests.
-        """
+        """Acquire all the simple requests."""
         return self.get_simple_requests()
-        
 
     @property
     def raw_infos(self) -> list[RawCommunicationInfo]:

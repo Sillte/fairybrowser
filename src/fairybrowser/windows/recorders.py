@@ -1,10 +1,11 @@
-from pathlib import Path 
 import json
 import time
-import json
-from fairybrowser.windows.models import MouseEvent, MouseEventTypeEnum 
-import pynput
+from pathlib import Path
 from threading import Event
+
+import pynput
+
+from fairybrowser.windows.models import MouseEvent, MouseEventTypeEnum
 
 
 class MouseRecorder:
@@ -51,9 +52,7 @@ class MouseRecorder:
         mouse_listener.stop()
         keyboard_listener.stop()
 
-        output_path.write_text(
-            json.dumps([elem.model_dump() for elem in self.events], indent=4, ensure_ascii=False)
-        )
+        output_path.write_text(json.dumps([elem.model_dump() for elem in self.events], indent=4, ensure_ascii=False))
         print(f"💾 記録を保存しました: {output_path}")
 
 

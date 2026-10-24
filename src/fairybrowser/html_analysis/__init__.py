@@ -1,8 +1,7 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from selectolax.lexbor import LexborHTMLParser
-
 
 KEEP_ATTRS = {
     "id",
