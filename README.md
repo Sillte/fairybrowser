@@ -29,7 +29,7 @@ A small Python project that helps start and connect to Chromium-based browsers v
 
 Prerequisites
 
-- Python 3.12 >=
+- Python 3.12 <=
 - uv
 - Optional: Playwright and browser binaries
 
@@ -37,8 +37,7 @@ Setup
 
 ```powershell
 # from repository root
-uv sync 
-uv run python -m playwright install
+uv sync --upgrade
 ```
 
 Run tests
@@ -116,17 +115,17 @@ for transaction in transactions:
     print(request_data, response_data)
 ```
 
-Notes:
+## Invocation
 
-- Use `DevtoolsLogPolicy.from_any(policy_mode="all")` to enable every category, including fetch stream and console capture, then pass it as `DevtoolsService(page, "./debug", policy=policy)`.
-- Set `save_memory=True` to retain captured network logs in `service.network_log`; call `.snapshot()` for an immutable tuple-based view. `output_folder` may also be supplied to write logs to disk, and is initialized (cleared) on service construction.
-- Import `NetworkLog` from `fairybrowser.devtools` and call `NetworkLog.load("./debug")` to load saved files together. It groups HTTP transactions, Server-Sent Events, and Websocket connections while preserving fetch stream events.
-- HTTP transaction, Websocket connection, and Server-Sent Events predicates can filter which grouped logs are saved.
-- Use `network_log.get_http_transactions(method="POST", path="/api")` to filter loaded HTTP transactions by case-insensitive method and URL substring.
-- Import `DevtoolsService`, `DevtoolsLogPolicy`, `NetworkLog`, and the public event/model types from `fairybrowser.devtools`; import `sync_browser`, `sync_page`, `BrowserInfo`, `MousePlayer`, and `MouseRecorder` from `fairybrowser`. `DevtoolsService` is also available from the top-level package.
-- `HTTPTransaction.request` contains the request method, URL, headers, and bytes body.
-- `HTTPTransaction.response` is `None` when no response data was recorded; otherwise it contains the status, headers, and bytes body.
-- `HTTPRequest.body_json` and `HTTPResponse.body_json` attempt to decode JSON bodies; if decoding fails they return the raw text.
+The purpose of Invocation is to provide a framework for synchronously executing browser operations and aggregating their results into a coherent output.
+
+Playwright provides powerful tools for triggering and performing browser operations. When an operation produces a straightforward result, Playwright alone is often sufficient.
+
+However, some tasks require the aggregation of various messages generated during their execution to produce the desired output.
+
+Invocation is designed to address this need: collecting and processing the resulting messages to produce the desired output.
+
+
 
 
 

@@ -21,11 +21,14 @@ from fairybrowser.shared.event import Disposable
 
 
 @dataclass(frozen=True)
-class InvocationContext:
-    """When the process ends, `completed_event` must be `set`."""
+class InvocationContext[T]:
+    """Invocation state and the signal used to indicate completion."""
 
     state: dict[str, Any] = field(default_factory=dict)
     completion_event: Event = field(default_factory=Event)
+
+    def completion(self) -> None:
+        self.completion_event.set()
 
 
 @dataclass(frozen=True)
@@ -150,12 +153,17 @@ class InvocationCreator[S, T]:
         on_completion: Callable[[Page, InvocationContext], T] | Callable[[InvocationContext], T],
         listeners: Sequence[InvocationListener | EventCallable] | EventCallable | InvocationListener,
     ) -> Self:
-        return cls(on_start=cls._resolve_on_start(on_start),
-                   on_completion=cls._resolve_on_completion(on_completion),
-                   listeners=cls._resolve_listeners(listeners))
+        return cls(
+            on_start=cls._resolve_on_start(on_start),
+            on_completion=cls._resolve_on_completion(on_completion),
+            listeners=cls._resolve_listeners(listeners),
+        )
 
     def start(self, input: S, page: Page, context: InvocationContext) -> None:
         self.on_start(input, page, context)
+
+    def finalize(self, page: Page, context: InvocationContext) -> T:
+        return self.on_completion(page, context)
 
     @classmethod
     def _resolve_on_start(
@@ -246,7 +254,14 @@ class InvocationExecutor[S, T]:
     def __init__(self, invocation_creator: InvocationCreatorProtocol) -> None:
         self._invocation_creator = invocation_creator
 
-    def invoke(self, input: S, configuration: InvocationConfiguration, *, output_folder: Path | None = None) -> T:
+    @classmethod
+    def from_any(cls, invocation_creator: InvocationCreatorProtocol) -> Self:
+        return cls(invocation_creator=invocation_creator)
+
+    def invoke(
+        self, input: S, configuration: InvocationConfiguration | None = None, *, output_folder: Path | None = None
+    ) -> T:
+        configuration = configuration or InvocationConfiguration.from_any()
         context = InvocationContext()
         listeners = self._invocation_creator.listeners
         policy = DevtoolsLogPolicy.from_any(categories=_get_required_categories(listeners))

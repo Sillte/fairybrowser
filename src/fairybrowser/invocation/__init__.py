@@ -1,3 +1,5 @@
+from playwright.sync_api import Page
+
 from fairybrowser.invocation.models import (
     FetchTextStreamEventListener,
     HTTPTransactionListener,
@@ -20,6 +22,7 @@ __all__ = [
     "InvocationCreatorProtocol",
     "InvocationExecutor",
     "InvocationListener",
+    "Page",
     "ServerSentEventListener",
     "WebsocketConnectionListener",
 ]

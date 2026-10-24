@@ -19,6 +19,14 @@ from fairybrowser.invocation import (
 from fairybrowser.models import BrowserInfo
 
 
+def test_invocation_context_completion_sets_completion_event():
+    context = InvocationContext()
+
+    context.completion()
+
+    assert context.completion_event.is_set()
+
+
 @pytest.mark.parametrize(
     ("listener_type", "event"),
     [

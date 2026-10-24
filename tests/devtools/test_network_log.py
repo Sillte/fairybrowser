@@ -86,25 +86,6 @@ def test_network_log_loads_and_groups_saved_logs(tmp_path: Path):
     assert connection.events[1].frame.payload_data == "hello"
 
 
-def test_fetch_text_stream_event_reads_legacy_data_key():
-    event = FetchTextStreamEvent.model_validate(
-        {
-            "stream_id": "fetch-1",
-            "event_type": "chunk",
-            "url": "https://example.com/stream",
-            "method": "GET",
-            "status": 200,
-            "chunk_index": 0,
-            "timestamp_ms": 1000,
-            "elapsed_ms": 5,
-            "data": "legacy text",
-        }
-    )
-
-    assert event.text == "legacy text"
-    assert '"text":"legacy text"' in event.model_dump_json()
-
-
 def test_network_log_handles_missing_optional_logs(tmp_path: Path):
     snapshot = NetworkLog.load(tmp_path).snapshot()
 

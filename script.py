@@ -1,24 +1,33 @@
-from fairybrowser import sync_page
-from fairybrowser.devtools import DevtoolsService
-from fairybrowser.devtools.models.fetch_text_stream_event import FetchTextStreamEvent
-from fairybrowser.devtools.models.policy import DevtoolsLogPolicy
-
-address = "https://chatgpt.com/"
-
-
-def predicate(event: FetchTextStreamEvent) -> bool:
-    return event.url.startswith("https://chatgpt.com/unauth-mweb/conversation/updates")
+from fairybrowser.invocation import (
+    HTTPTransactionListener,
+    InvocationCreator,
+    InvocationExecutor,
+)
 
 
-with sync_page() as page:
-    policy = DevtoolsLogPolicy.from_any(categories=("fetch_stream",), fetch_stream_event_predicates=[predicate])
-    user = DevtoolsService(page=page, output_folder="./usage/check", policy=policy)
-    user.start()
-    page.goto(address)
-    prompt = page.locator("#mobile-composer-prompt")
-    prompt.fill("炊飯器について教えてくださいー")
-    page.locator("button[data-composer-submit]").click()
-    page.wait_for_timeout(30_000)
-    html = page.content()
+def start(url, page, context):
+    page.goto(url)
 
-    # print(clean_html(html))
+
+def collect_api_call(transaction, context):
+    if "/api/" in transaction.request.url:
+        context.state.setdefault("api_calls", []).append(
+            {
+                "method": transaction.request.method,
+                "url": transaction.request.url,
+                "status": transaction.response.status if transaction.response else None,
+            }
+        )
+
+    context.completion()
+
+
+if __name__ == "__main__":
+    creator = InvocationCreator.from_any(
+        on_start=start,
+        on_completion=lambda context: context.state.get("api_calls", []),
+        listeners=HTTPTransactionListener.from_any(collect_api_call),
+    )
+
+    api_calls = InvocationExecutor.from_any(creator).invoke("https://example.com")
+    print(api_calls)
