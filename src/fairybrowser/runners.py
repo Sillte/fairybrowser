@@ -1,8 +1,8 @@
 import subprocess
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 import psutil
 from playwright.sync_api import Browser, Page, Playwright, sync_playwright
@@ -179,7 +179,7 @@ def _to_apt_execution_state(
 
 
 @contextmanager
-def sync_browser(info: BrowserInfo | str | None = None) -> Generator[Browser]:
+def sync_browser(info: BrowserInfo | str | None = None) -> Generator[Browser, None, None]:
     """Get `playwright.sync_api.Browser with the context."""
     state = _to_apt_execution_state(info)
     with sync_playwright() as playwright:
@@ -188,7 +188,7 @@ def sync_browser(info: BrowserInfo | str | None = None) -> Generator[Browser]:
 
 
 @contextmanager
-def sync_page(browser_info: BrowserInfo | str | None = None) -> Generator[Page]:
+def sync_page(browser_info: BrowserInfo | str | None = None) -> Generator[Page, None, None]:
     """Acquire the `page`, based on the given information."""
     state = _to_apt_execution_state(browser_info)
     with sync_playwright() as playwright:
