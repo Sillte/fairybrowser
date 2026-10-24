@@ -29,7 +29,7 @@ A small Python project that helps start and connect to Chromium-based browsers v
 
 Prerequisites
 
-- Python 3.11 >=
+- Python 3.12 >=
 - uv
 - Optional: Playwright and browser binaries
 
@@ -66,9 +66,9 @@ with sync_page(info) as page:
     print(page.title())
 ```
 
-## Devtools: SimpleRequestAnalyzer
+## Devtools: HTTPTransactionAnalyzer
 
-The `devtools` helpers collect CDP network events and store them under a debug folder. HTTP requests are saved as JSON files; EventSource messages, fetch response chunks, and WebSocket lifecycle/frame events are appended as JSON Lines to `network/event_stream.jsonl`, `network/fetch_stream.jsonl`, and `network/websocket.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `SimpleRequestAnalyzer` reads the HTTP logs and converts them into a convenient `SimpleRequest` model which exposes parsed `payload` and `response_json` properties.
+The `devtools` helpers collect CDP network events and store them under a debug folder. HTTP requests are saved as JSON files; EventSource messages, fetch response chunks, and WebSocket lifecycle/frame events are appended as JSON Lines to `network/event_stream.jsonl`, `network/fetch_stream.jsonl`, and `network/websocket.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `HTTPTransactionAnalyzer` reads the HTTP logs and converts each exchange to an `HTTPTransaction` containing an `HTTPRequest` and an optional `HTTPResponse`.
 
 Typical usage:
 
@@ -76,7 +76,7 @@ Typical usage:
 import json
 from fairybrowser import sync_page
 from fairybrowser.devtools.collectors import DevtoolsUser
-from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
+from fairybrowser.devtools.analyzers import HTTPTransactionAnalyzer
 
 with sync_page() as page:
     DevtoolsUser(page, "./debug").start()
@@ -91,16 +91,20 @@ with sync_page() as page:
         }});
     ''')
     page.wait_for_timeout(3000)
-requests = SimpleRequestAnalyzer("./debug").get_simple_requests()
-for request in requests:
-    print(request.payload, request.response_json)
+transactions = HTTPTransactionAnalyzer("./debug").get_transactions()
+for transaction in transactions:
+    request_data = transaction.request.body_json
+    response_data = transaction.response.body_json if transaction.response else None
+    print(request_data, response_data)
 ```
 
 Notes:
 
-- `SimpleRequestAnalyzer` accepts the path to the log folder (it will assert the folder exists).
+- `HTTPTransactionAnalyzer` accepts the path to the log folder (it will assert the folder exists).
 - It automatically finds JSON files under the folder and under `network/` within the folder.
-- `SimpleRequest.payload` and `SimpleRequest.response_json` attempt to decode JSON bodies; if decoding fails they return the raw text.
+- `HTTPTransaction.request` contains the request method, URL, headers, and bytes body.
+- `HTTPTransaction.response` is `None` when no response data was recorded; otherwise it contains the status, headers, and bytes body.
+- `HTTPRequest.body_json` and `HTTPResponse.body_json` attempt to decode JSON bodies; if decoding fails they return the raw text.
 
 I added unit tests for the analyzer in `tests/test_analyzers.py` which validate parsing and filtering by method/path.
 
@@ -109,4 +113,3 @@ I added unit tests for the analyzer in `tests/test_analyzers.py` which validate 
 ## License
 
 This repository includes a `LICENSE` file in the workspace root.
-

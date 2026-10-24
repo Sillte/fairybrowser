@@ -1,8 +1,9 @@
 import json
 from pathlib import Path
 
-from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
-from fairybrowser.devtools.models import RawCommunicationInfo
+from fairybrowser.devtools.analyzers import HTTPTransactionAnalyzer
+from fairybrowser.devtools.models.http_transaction import RawCommunicationInfo
+from fairybrowser.devtools.models.http_transaction import HTTPTransaction
 
 
 def _write_raw_list(path: Path, raw_list: list[RawCommunicationInfo]):
@@ -11,7 +12,7 @@ def _write_raw_list(path: Path, raw_list: list[RawCommunicationInfo]):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
 
-def test_simple_request_analyzer_basic(tmp_path: Path):
+def test_http_transaction_analyzer_basic(tmp_path: Path):
     out = tmp_path / "debug"
     out.mkdir()
 
@@ -29,21 +30,22 @@ def test_simple_request_analyzer_basic(tmp_path: Path):
     file_path = out / "req1.json"
     _write_raw_list(file_path, [raw])
 
-    analyzer = SimpleRequestAnalyzer(out)
-    simples = analyzer.get_simple_requests()
-    assert len(simples) == 1
-    s = simples[0]
-    assert s.method.upper() == "POST"
-    assert "example.com/api/resource" in s.url
-    assert s.status == 200
-    # parsed payload and response
-    assert isinstance(s.payload, dict)
-    assert s.payload.get("foo") == "bar"
-    assert isinstance(s.response_json, dict)
-    assert s.response_json.get("result") == "ok"
+    analyzer = HTTPTransactionAnalyzer(out)
+    transactions = analyzer.get_transactions()
+    assert len(transactions) == 1
+    transaction = transactions[0]
+    assert transaction.request.method == "POST"
+    assert "example.com/api/resource" in transaction.request.url
+    assert transaction.response is not None
+    assert transaction.response.status == 200
+    assert isinstance(transaction.request.body_json, dict)
+    assert transaction.request.body_json["foo"] == "bar"
+    assert isinstance(transaction.response.body_json, dict)
+    assert transaction.response.body_json["result"] == "ok"
+    assert transaction.time == 1.23
 
 
-def test_simple_request_analyzer_filters(tmp_path: Path):
+def test_http_transaction_analyzer_filters(tmp_path: Path):
     out = tmp_path / "debug2"
     out.mkdir()
 
@@ -68,14 +70,33 @@ def test_simple_request_analyzer_filters(tmp_path: Path):
     _write_raw_list(out / "a.json", [r1])
     _write_raw_list(out / "b.json", [r2])
 
-    analyzer = SimpleRequestAnalyzer(out)
-    allr = analyzer.get_simple_requests()
-    assert len(allr) == 2
+    analyzer = HTTPTransactionAnalyzer(out)
+    transactions = analyzer.get_transactions()
+    assert len(transactions) == 2
 
-    posts = analyzer.get_simple_requests(method="post")
+    posts = analyzer.get_transactions(method="post")
     assert len(posts) == 1
-    assert posts[0].method.upper() == "POST"
+    assert posts[0].request.method == "POST"
 
-    path_filtered = analyzer.get_simple_requests(path="/b/")
+    path_filtered = analyzer.get_transactions(path="/b/")
     assert len(path_filtered) == 1
-    assert "/b/" in path_filtered[0].url
+    assert "/b/" in path_filtered[0].request.url
+
+
+def test_http_transaction_without_response(tmp_path: Path):
+    out = tmp_path / "debug3"
+    out.mkdir()
+    _write_raw_list(
+        out / "req.json",
+        [
+            RawCommunicationInfo(
+                url="https://example.com",
+                method="GET",
+                request_body=b"",
+            )
+        ],
+    )
+
+    transaction = HTTPTransactionAnalyzer(out).get_transactions()[0]
+    assert isinstance(transaction, HTTPTransaction)
+    assert transaction.response is None

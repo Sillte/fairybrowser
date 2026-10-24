@@ -1,6 +1,6 @@
 import json
 
-from fairybrowser.devtools.analyzers import SimpleRequestAnalyzer
+from fairybrowser.devtools.analyzers import HTTPTransactionAnalyzer
 from fairybrowser.devtools.collectors import DevtoolsUser
 
 if __name__ == "__main__":
@@ -19,6 +19,8 @@ if __name__ == "__main__":
             }});
         ''')
         page.wait_for_timeout(3000)
-    requests = SimpleRequestAnalyzer("./debug").get_simple_requests()
-    for request in requests:
-        print(request.payload, request.response_json)
+    transactions = HTTPTransactionAnalyzer("./debug").get_transactions()
+    for transaction in transactions:
+        request_data = transaction.request.body_json
+        response_data = transaction.response.body_json if transaction.response else None
+        print(request_data, response_data)

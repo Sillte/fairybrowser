@@ -2,28 +2,29 @@ import json
 from itertools import chain
 from pathlib import Path
 
-from fairybrowser.devtools.models import RawCommunicationInfo, SimpleRequest
+from fairybrowser.devtools.models.http_transaction import RawCommunicationInfo
+from fairybrowser.devtools.models.http_transaction import HTTPTransaction
 
 
-class SimpleRequestAnalyzer:
+class HTTPTransactionAnalyzer:
     def __init__(self, log_folder: Path | str):
         self.log_folder = Path(log_folder)
         assert self.log_folder.exists()
 
-    def get_simple_requests(self, method: str | None = None, path: str | None = None) -> list[SimpleRequest]:
-        """Acquire the simple requests based on the search parapmeters."""
+    def get_transactions(self, method: str | None = None, path: str | None = None) -> list[HTTPTransaction]:
+        """Acquire HTTP transactions matching the optional method and URL filters."""
         raw_infos = self.raw_infos
-        simple_requests = [SimpleRequest.from_raw(elem) for elem in raw_infos]
+        transactions = [HTTPTransaction.from_raw(elem) for elem in raw_infos]
         if method:
-            simple_requests = [elem for elem in simple_requests if elem.method.lower().find(method.lower()) != -1]
+            transactions = [elem for elem in transactions if method.lower() in elem.request.method.lower()]
         if path:
-            simple_requests = [elem for elem in simple_requests if elem.url.lower().find(path.lower()) != -1]
-        return simple_requests
+            transactions = [elem for elem in transactions if path.lower() in elem.request.url.lower()]
+        return transactions
 
     @property
-    def simple_requests(self) -> list[SimpleRequest]:
-        """Acquire all the simple requests."""
-        return self.get_simple_requests()
+    def transactions(self) -> list[HTTPTransaction]:
+        """Acquire all HTTP transactions."""
+        return self.get_transactions()
 
     @property
     def raw_infos(self) -> list[RawCommunicationInfo]:

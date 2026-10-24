@@ -15,12 +15,11 @@ from playwright._impl._errors import TargetClosedError
 from playwright.sync_api import BrowserContext, Frame, Page
 
 from fairybrowser.devtools.models import (
-    EventStreamMessage,
     FetchStreamEvent,
-    RawCommunicationInfo,
-    WebSocketEvent,
-    WebSocketFrame,
 )
+from fairybrowser.devtools.models.http_transaction import RawCommunicationInfo
+from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
+from fairybrowser.devtools.models.websockets import WebSocketEvent, WebSocketFrame
 
 _FETCH_STREAM_CAPTURE_SCRIPT = r"""
 (() => {
@@ -144,7 +143,7 @@ def _dump_request(request_id: str, com_infos: list[RawCommunicationInfo], output
 
 def _append_event(
     path: Path,
-    event: EventStreamMessage | FetchStreamEvent | WebSocketEvent,
+    event: ServerSentEvent | FetchStreamEvent | WebSocketEvent,
 ):
     with path.open("a", encoding="utf-8") as file:
         file.write(event.model_dump_json() + "\n")
@@ -271,7 +270,7 @@ class DevtoolsUser:
 
         def on_event_source_message(params):
             request_id = params["requestId"]
-            event = EventStreamMessage(
+            event = ServerSentEvent(
                 request_id=request_id,
                 timestamp=params["timestamp"],
                 url=request_urls.get(request_id),

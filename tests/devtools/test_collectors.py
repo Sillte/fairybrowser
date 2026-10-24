@@ -6,10 +6,10 @@ from playwright.sync_api import Page
 
 from fairybrowser.devtools.collectors import DevtoolsUser
 from fairybrowser.devtools.models import (
-    EventStreamMessage,
     FetchStreamEvent,
-    WebSocketEvent,
 )
+from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
+from fairybrowser.devtools.models.websockets import WebSocketEvent
 
 
 class FakeCDPClient:
@@ -114,7 +114,7 @@ def test_collects_event_stream_messages(tmp_path: Path):
     )
 
     event_path = output_folder / "network" / "event_stream.jsonl"
-    event = EventStreamMessage.model_validate_json(event_path.read_text().strip())
+    event = ServerSentEvent.model_validate_json(event_path.read_text().strip())
     assert event.request_id == "sse-1"
     assert event.url == "https://example.com/events"
     assert event.data == "hello"

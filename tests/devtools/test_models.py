@@ -1,4 +1,4 @@
-from fairybrowser.devtools.models import RawCommunicationInfo
+from fairybrowser.devtools.models.http_transaction import RawCommunicationInfo
 
 
 def test_model_validate_handles_none_base64():
