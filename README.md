@@ -29,7 +29,7 @@ A small Python project that helps start and connect to Chromium-based browsers v
 
 Prerequisites
 
-- Python 3.12 <=
+- Python 3.12 >=
 - uv
 - Optional: Playwright and browser binaries
 
@@ -124,9 +124,6 @@ Playwright provides powerful tools for triggering and performing browser operati
 However, some tasks require the aggregation of various messages generated during their execution to produce the desired output.
 
 Invocation is designed to address this need: collecting and processing the resulting messages to produce the desired output.
-
-
-
 
 
 ## License

@@ -7,9 +7,7 @@ import psutil
 from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
 from fairybrowser.port_utils import is_port_free
 
-_this_folder = Path(__file__).absolute().parent
-_states_folder = _this_folder / "EXECUTION_STATES"
-_states_folder.mkdir(exist_ok=True)
+_states_folder = Path.home() / ".config" / "fairybrowser" / "EXECUTION_STATES"
 
 
 def _to_type_folder(type: BrowserType) -> Path:
@@ -22,7 +20,7 @@ def _to_json_path(name: str, type: BrowserType) -> Path:
 
 def save_state(state: ExecutionState) -> None:
     path = _to_json_path(state.name, state.type)
-    path.parent.mkdir(exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(state.model_dump_json())
 
 

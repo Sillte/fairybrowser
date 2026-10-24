@@ -5,16 +5,23 @@ import urllib.error
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from fairybrowser import monitors
 from fairybrowser.models import BrowserInfo, ExecutionState
 
 
-def _state_path(name: str):
-    return monitors._states_folder / f"{name}.json"
+@pytest.fixture(autouse=True)
+def isolate_execution_states(tmp_path, monkeypatch):
+    monkeypatch.setattr(monitors, "_states_folder", tmp_path / "execution_states")
 
 
-def teardown_state(name: str):
-    p = _state_path(name)
+def _state_path(name: str, type: str = "chromium"):
+    return monitors._states_folder / type / f"{name}.json"
+
+
+def teardown_state(name: str, type: str = "chromium"):
+    p = _state_path(name, type)
     if p.exists():
         p.unlink()
 
