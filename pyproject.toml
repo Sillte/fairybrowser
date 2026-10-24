@@ -21,7 +21,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["pytest>=7.0.0", "ruff>=0.15", "ty", "mypy>=1.14.1", "prek", "pexpect"]
+dev = ["pytest>=7.0.0", "ruff>=0.15", "ty", "mypy>=1.14.1", "prek"]
 
 
 # pyproject.toml
@@ -34,7 +34,6 @@ testpaths = ["tests"]
 [tool.ruff]
 fix = true
 line-length = 120
-extend-exclude = ["archives"]
 
 [tool.ruff.lint]
 
@@ -52,4 +51,3 @@ unused-ignore-comment = "ignore"
 
 [tool.uv]
 exclude-newer = "1 week"
-exclude-newer-package = { pytoy-llm = false }
