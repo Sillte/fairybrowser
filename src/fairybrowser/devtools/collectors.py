@@ -14,6 +14,7 @@ from typing import Any
 from playwright._impl._errors import TargetClosedError
 from playwright.sync_api import BrowserContext, Frame, Page
 
+from fairybrowser.devtools.event_publisher import EventPublisher
 from fairybrowser.devtools.models import (
     FetchStreamEvent,
 )
@@ -213,10 +214,23 @@ class DevtoolsUser:
         self.output_folder = Path(output_folder) if output_folder is not None else None
         if self.output_folder is not None:
             _init_folder(self.output_folder)
-        self.page = page
+        self._page = page
         self.policy = policy if policy is not None else DevtoolsLogPolicy.from_any()
-        self.network_log = NetworkLog() if save_memory else None
+        self._event_publisher = EventPublisher()
+        self._network_log = NetworkLog() if save_memory else None
         self._fetch_stream_capture_started = False
+
+    @property
+    def event_publisher(self) -> EventPublisher:
+        return self._event_publisher
+
+    @property
+    def page(self) -> Page:
+        return self._page
+
+    @property
+    def network_log(self) -> NetworkLog | None:
+        return self._network_log
 
     def start(self):
         context = self._to_context(self.page)
@@ -226,6 +240,10 @@ class DevtoolsUser:
             self._start_console(client)
         if "fetch_stream" in self.policy.categories:
             self._start_fetch_stream_capture()
+        self._event_publisher.start()
+
+    def terminate(self) -> None:
+        self._event_publisher.terminate()
 
     def _start_fetch_stream_capture(self):
         if self._fetch_stream_capture_started:
@@ -240,6 +258,7 @@ class DevtoolsUser:
             return
         frame = source.get("frame")
         event = FetchStreamEvent.model_validate({**payload, "frame_url": getattr(frame, "url", None)})
+        self._event_publisher.publish(event)
         if self.network_log is not None:
             self.network_log.add_fetch_stream_event(event)
         if self.output_folder is not None:
@@ -348,8 +367,9 @@ class DevtoolsUser:
                     transaction = _to_http_transaction(info)
                     if self.policy.should_save_transaction(transaction):
                         accepted_transactions.append(transaction)
-                if self.network_log is not None:
-                    for transaction in accepted_transactions:
+                for transaction in accepted_transactions:
+                    self._event_publisher.publish(transaction)
+                    if self.network_log is not None:
                         self.network_log.add_http_transaction(transaction)
                 if accepted_transactions and network_folder is not None:
                     _dump_request(request_id, accepted_transactions, network_folder)
@@ -373,6 +393,7 @@ class DevtoolsUser:
                 event_id=params.get("eventId", ""),
                 data=params["data"],
             )
+            self._event_publisher.publish(event)
             if request_id in accepted_server_event_requests:
                 if self.network_log is not None:
                     self.network_log.add_server_sent_event(event)
@@ -429,6 +450,8 @@ class DevtoolsUser:
                         if key not in {"requestId", "timestamp", "url", "response"}
                     },
                 )
+                self._event_publisher.publish(event)
+
                 if request_id in accepted_websocket_requests:
                     if self.network_log is not None:
                         self.network_log.add_websocket_event(event)

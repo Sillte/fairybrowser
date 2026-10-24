@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, JsonValue, PrivateAttr, field_serializer, field_validator
 
-from fairybrowser.devtools.models.codecs import _decode_body_from_json, _encode_body_for_json
+from fairybrowser.devtools.models.codecs import decode_body_from_json, encode_body_for_json
 
 
 class HTTPResponse(BaseModel, frozen=True):
@@ -16,11 +16,11 @@ class HTTPResponse(BaseModel, frozen=True):
     @field_validator("body", mode="before")
     @classmethod
     def _decode_body(cls, value: Any) -> bytes:
-        return _decode_body_from_json(value) or b""
+        return decode_body_from_json(value) or b""
 
     @field_serializer("body")
     def _encode_body(self, value: bytes) -> str | dict[str, str] | None:
-        return _encode_body_for_json(value)
+        return encode_body_for_json(value)
 
     @property
     def body_text(self) -> str:
@@ -49,11 +49,11 @@ class HTTPRequest(BaseModel, frozen=True):
     @field_validator("body", mode="before")
     @classmethod
     def _decode_body(cls, value: Any) -> bytes:
-        return _decode_body_from_json(value) or b""
+        return decode_body_from_json(value) or b""
 
     @field_serializer("body")
     def _encode_body(self, value: bytes) -> str | dict[str, str] | None:
-        return _encode_body_for_json(value)
+        return encode_body_for_json(value)
 
     @property
     def body_text(self) -> str:

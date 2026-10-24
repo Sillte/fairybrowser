@@ -70,6 +70,26 @@ with sync_page(info) as page:
 
 The `devtools` helpers collect selected CDP network events and store them under a debug folder. By default, HTTP, EventSource, and WebSocket logs are enabled; fetch stream capture and console logging are disabled. Configure `DevtoolsUser` with a `DevtoolsLogPolicy` to change the captured categories. HTTP transactions are saved as JSON files; EventSource and WebSocket events are appended to separate JSON Lines files per request ID under `network/event_stream/` and `network/websocket/`, with sanitized, hashed filenames. Fetch response chunks are appended to `network/fetch_stream.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `HTTPTransactionAnalyzer` reads the HTTP logs and converts each exchange to an `HTTPTransaction` containing an `HTTPRequest` and an optional `HTTPResponse`.
 
+`DevtoolsUser.event_publisher` also exposes typed events for live notifications. Subscribe before starting the collector, and terminate it when finished:
+
+```python
+devtools = DevtoolsUser(page, "./debug", policy=DevtoolsLogPolicy.from_any(policy_mode="all"))
+devtools.event_publisher.on_fetch_stream_event.subscribe(
+    lambda event: print("Fetch chunk:", event.url, event.data)
+)
+devtools.event_publisher.on_server_sent_event.subscribe(
+    lambda event: print("Server-Sent Event:", event.data)
+)
+devtools.event_publisher.on_http_transaction.subscribe(
+    lambda transaction: print("HTTP:", transaction.request.method, transaction.request.url)
+)
+devtools.start()
+try:
+    page.goto("https://example.com")
+finally:
+    devtools.terminate()
+```
+
 Typical usage:
 
 ```python

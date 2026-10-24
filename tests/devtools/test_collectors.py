@@ -2,6 +2,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event as ThreadingEvent
 from typing import cast
 
 import pytest
@@ -95,6 +96,12 @@ def test_memory_only_mode_updates_network_log_and_keeps_snapshots_immutable():
 def test_memory_and_file_storage_can_be_enabled_together(tmp_path: Path):
     output_folder = tmp_path / "both-modes"
     collector = DevtoolsUser(cast(Page, object()), output_folder, save_memory=True)
+    captured_transactions = []
+    received_transaction = ThreadingEvent()
+    collector.event_publisher.on_http_transaction.subscribe(
+        lambda transaction: (captured_transactions.append(transaction), received_transaction.set())
+    )
+    collector.event_publisher.start()
     client = FakeCDPClient()
     collector._start_network(client)
     client.emit(
@@ -106,10 +113,16 @@ def test_memory_and_file_storage_can_be_enabled_together(tmp_path: Path):
         {"requestId": "http-1", "response": {"status": 200, "headers": {}}},
     )
     client.emit("Network.loadingFinished", {"requestId": "http-1"})
+    try:
+        assert received_transaction.wait(2)
+    finally:
+        collector.terminate()
 
     assert collector.network_log is not None
     assert len(collector.network_log.http_transactions) == 1
     assert (output_folder / "network" / "http-1.json").exists()
+    assert len(captured_transactions) == 1
+    assert captured_transactions[0] == collector.network_log.http_transactions[0]
 
 
 def test_captures_fetch_stream_chunks(tmp_path: Path):
@@ -120,6 +133,11 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
     )
     network_folder = output_folder / "network"
     network_folder.mkdir()
+    captured_events = []
+    received_event = ThreadingEvent()
+    collector.event_publisher.on_fetch_stream_event.subscribe(
+        lambda event: (captured_events.append(event), received_event.set())
+    )
 
     collector._start_fetch_stream_capture()
     collector._start_fetch_stream_capture()
@@ -130,6 +148,7 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
     assert init_script == page.evaluated_script
     assert "response.clone()" in init_script
     assert binding is not None
+    collector.event_publisher.start()
     binding(
         {},
         {
@@ -145,12 +164,17 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
             "data": "data: hello\\n\\n",
         },
     )
+    try:
+        assert received_event.wait(2)
+    finally:
+        collector.terminate()
 
     event_path = network_folder / "fetch_stream.jsonl"
     events = [FetchStreamEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
     assert len(events) == 1
     assert events[0].event_type == "chunk"
     assert events[0].data == "data: hello\\n\\n"
+    assert captured_events == events
 
 
 def test_default_policy_skips_fetch_stream_capture(tmp_path: Path):
@@ -179,10 +203,16 @@ def test_collects_event_stream_messages(tmp_path: Path):
 
     output_folder = tmp_path / "debug"
     collector = DevtoolsUser(cast(Page, object()), output_folder)
+    captured_events = []
+    received_event = ThreadingEvent()
+    collector.event_publisher.on_server_sent_event.subscribe(
+        lambda event: (captured_events.append(event), received_event.set())
+    )
     client = FakeCDPClient()
     collector._start_network(client)
     assert "Network.eventSourceMessageReceived" in client.handlers_when_enabled
 
+    collector.event_publisher.start()
     client.emit(
         "Network.requestWillBeSent",
         {
@@ -203,11 +233,17 @@ def test_collects_event_stream_messages(tmp_path: Path):
             "data": "hello",
         },
     )
+    try:
+        assert received_event.wait(2)
+    finally:
+        collector.terminate()
 
     event_paths = list((output_folder / "network" / "event_stream").glob("*.jsonl"))
     assert len(event_paths) == 1
     assert "sse_1" in event_paths[0].stem
     assert hashlib.sha256(b"sse/1").hexdigest() in event_paths[0].stem
+    assert len(captured_events) == 1
+    assert captured_events[0].data == "hello"
     event = ServerSentEvent.model_validate_json(event_paths[0].read_text().strip())
     assert event.request_id == "sse/1"
     assert event.url == "https://example.com/events"
