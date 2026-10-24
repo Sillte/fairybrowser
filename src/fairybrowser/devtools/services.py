@@ -15,14 +15,15 @@ from playwright._impl._errors import TargetClosedError
 from playwright.sync_api import BrowserContext, Frame, Page
 
 from fairybrowser.devtools.event_publisher import EventPublisher
-from fairybrowser.devtools.models import (
-    FetchStreamEvent,
+from fairybrowser.devtools.models.fetch_text_stream_event import (
+    FetchTextStreamEvent,
 )
 from fairybrowser.devtools.models.http_transaction import HTTPRequest, HTTPResponse, HTTPTransaction
 from fairybrowser.devtools.models.network_log import NetworkLog
 from fairybrowser.devtools.models.policy import DevtoolsLogPolicy
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent, ServerSentEvents
-from fairybrowser.devtools.models.websockets import WebSocketConnection, WebSocketEvent, WebSocketFrame
+from fairybrowser.devtools.models.websockets import WebsocketConnection, WebsocketEvent, WebsocketFrame
+from fairybrowser.shared.event import Event
 
 _FETCH_STREAM_CAPTURE_SCRIPT = r"""
 (() => {
@@ -60,7 +61,7 @@ _FETCH_STREAM_CAPTURE_SCRIPT = r"""
       };
       let chunkIndex = 0;
 
-      const emit = async (eventType, data = "", error = null) => {
+      const emit = async (eventType, text = "", error = null) => {
         try {
           await window.__fairybrowser_capture_fetch_stream({
             ...base,
@@ -68,7 +69,7 @@ _FETCH_STREAM_CAPTURE_SCRIPT = r"""
             chunk_index: chunkIndex,
             timestamp_ms: performance.timeOrigin + performance.now(),
             elapsed_ms: performance.now() - startedAt,
-            data,
+            text,
             error,
           });
         } catch (_) {}
@@ -115,11 +116,11 @@ def _error_catcher(function: Callable) -> Callable:
         try:
             function(*args, **kwargs)
         except TargetClosedError as e:
-            print("`TargetClosedError`  is invoked @`fairybrowser.devtools.collectors`", e)
+            print("`TargetClosedError`  is invoked @`fairybrowser.devtools.services`", e)
             raise e
         except CancelledError as e:
             print(
-                "`asyncio` related... `CancelledError` is invoked @`fairybrowser.devtools.collectors`",
+                "`asyncio` related... `CancelledError` is invoked @`fairybrowser.devtools.services`",
                 e,
             )
             raise e
@@ -178,7 +179,7 @@ def _dump_request(request_id: str, transactions: list[HTTPTransaction], output_f
 
 def _append_event(
     path: Path,
-    event: ServerSentEvent | FetchStreamEvent | WebSocketEvent,
+    event: ServerSentEvent | FetchTextStreamEvent | WebsocketEvent,
 ):
     with path.open("a", encoding="utf-8") as file:
         file.write(event.model_dump_json() + "\n")
@@ -193,13 +194,13 @@ def _safe_request_id_stem(request_id: str) -> str:
 def _append_id_event(
     folder: Path | None,
     request_id: str,
-    event: ServerSentEvent | WebSocketEvent,
+    event: ServerSentEvent | WebsocketEvent,
 ):
     if folder is not None:
         _append_event(folder / f"{_safe_request_id_stem(request_id)}.jsonl", event)
 
 
-class DevtoolsUser:
+class DevtoolsService:
     def __init__(
         self,
         page: Page | Frame,
@@ -221,8 +222,24 @@ class DevtoolsUser:
         self._fetch_stream_capture_started = False
 
     @property
-    def event_publisher(self) -> EventPublisher:
-        return self._event_publisher
+    def on_http_transaction(self) -> Event[HTTPTransaction]:
+        return self._event_publisher.on_http_transaction
+
+    @property
+    def on_fetch_stream_event(self) -> Event[FetchTextStreamEvent]:
+        return self._event_publisher.on_fetch_stream_event
+
+    @property
+    def on_server_sent_event(self) -> Event[ServerSentEvent]:
+        return self._event_publisher.on_server_sent_event
+
+    @property
+    def on_websocket_event(self) -> Event[WebsocketEvent]:
+        return self._event_publisher.on_websocket_event
+
+    @property
+    def on_websocket_connection(self) -> Event[WebsocketConnection]:
+        return self._event_publisher.on_websocket_connection
 
     @property
     def page(self) -> Page:
@@ -257,7 +274,9 @@ class DevtoolsUser:
         if "fetch_stream" not in self.policy.categories:
             return
         frame = source.get("frame")
-        event = FetchStreamEvent.model_validate({**payload, "frame_url": getattr(frame, "url", None)})
+        event = FetchTextStreamEvent.model_validate({**payload, "frame_url": getattr(frame, "url", None)})
+        if not self.policy.should_save_fetch_stream_event(event):
+            return
         self._event_publisher.publish(event)
         if self.network_log is not None:
             self.network_log.add_fetch_stream_event(event)
@@ -289,7 +308,7 @@ class DevtoolsUser:
         websocket_urls: dict[str, str] = {}
         server_events: dict[str, list[ServerSentEvent]] = {}
         accepted_server_event_requests: set[str] = set()
-        websocket_events: dict[str, list[WebSocketEvent]] = {}
+        websocket_events: dict[str, list[WebsocketEvent]] = {}
         accepted_websocket_requests: set[str] = set()
 
         def on_request_will_be_sent(params):
@@ -430,7 +449,7 @@ class DevtoolsUser:
 
                 frame_data = params.get("response")
                 frame = (
-                    WebSocketFrame(
+                    WebsocketFrame(
                         opcode=frame_data["opcode"],
                         mask=frame_data["mask"],
                         payload_data=frame_data["payloadData"],
@@ -438,7 +457,7 @@ class DevtoolsUser:
                     if frame_data is not None
                     else None
                 )
-                event = WebSocketEvent(
+                event = WebsocketEvent(
                     request_id=request_id,
                     event_type=event_type,
                     timestamp=params.get("timestamp"),
@@ -459,7 +478,7 @@ class DevtoolsUser:
                 else:
                     events = websocket_events.setdefault(request_id, [])
                     events.append(event)
-                    connection = WebSocketConnection(request_id=request_id, events=events)
+                    connection = WebsocketConnection(request_id=request_id, events=events)
                     if self.policy.should_save_websocket_connection(connection):
                         for accepted_event in events:
                             if self.network_log is not None:

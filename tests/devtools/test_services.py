@@ -8,12 +8,11 @@ from typing import cast
 import pytest
 from playwright.sync_api import Page
 
-from fairybrowser.devtools.collectors import DevtoolsUser
-from fairybrowser.devtools.models import FetchStreamEvent
+from fairybrowser.devtools import DevtoolsLogPolicy, DevtoolsService
+from fairybrowser.devtools.models.fetch_text_stream_event import FetchTextStreamEvent
 from fairybrowser.devtools.models.http_transaction import HTTPTransaction
-from fairybrowser.devtools.models.policy import DevtoolsLogPolicy
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
-from fairybrowser.devtools.models.websockets import WebSocketEvent
+from fairybrowser.devtools.models.websockets import WebsocketEvent
 
 
 class FakeCDPClient:
@@ -53,7 +52,7 @@ class FakePage:
 
 def test_requires_output_folder_or_memory_storage():
     with pytest.raises(ValueError, match="output_folder or set save_memory=True"):
-        DevtoolsUser(cast(Page, object()))
+        DevtoolsService(cast(Page, object()))
 
 
 def test_explicit_output_folder_is_initialized(tmp_path: Path):
@@ -61,14 +60,14 @@ def test_explicit_output_folder_is_initialized(tmp_path: Path):
     output_folder.mkdir()
     (output_folder / "stale.log").write_text("stale", encoding="utf-8")
 
-    collector = DevtoolsUser(cast(Page, object()), output_folder)
+    collector = DevtoolsService(cast(Page, object()), output_folder)
 
     assert collector.output_folder == output_folder
     assert not (output_folder / "stale.log").exists()
 
 
 def test_memory_only_mode_updates_network_log_and_keeps_snapshots_immutable():
-    collector = DevtoolsUser(cast(Page, object()), save_memory=True)
+    collector = DevtoolsService(cast(Page, object()), save_memory=True)
     client = FakeCDPClient()
     collector._start_network(client)
     client.emit(
@@ -95,13 +94,13 @@ def test_memory_only_mode_updates_network_log_and_keeps_snapshots_immutable():
 
 def test_memory_and_file_storage_can_be_enabled_together(tmp_path: Path):
     output_folder = tmp_path / "both-modes"
-    collector = DevtoolsUser(cast(Page, object()), output_folder, save_memory=True)
+    collector = DevtoolsService(cast(Page, object()), output_folder, save_memory=True)
     captured_transactions = []
     received_transaction = ThreadingEvent()
-    collector.event_publisher.on_http_transaction.subscribe(
+    collector.on_http_transaction.subscribe(
         lambda transaction: (captured_transactions.append(transaction), received_transaction.set())
     )
-    collector.event_publisher.start()
+    collector._event_publisher.start()
     client = FakeCDPClient()
     collector._start_network(client)
     client.emit(
@@ -126,16 +125,15 @@ def test_memory_and_file_storage_can_be_enabled_together(tmp_path: Path):
 
 
 def test_captures_fetch_stream_chunks(tmp_path: Path):
-
     output_folder = tmp_path / "debug"
-    collector = DevtoolsUser(
+    collector = DevtoolsService(
         cast(Page, FakePage()), output_folder, policy=DevtoolsLogPolicy.from_any(policy_mode="all")
     )
     network_folder = output_folder / "network"
     network_folder.mkdir()
     captured_events = []
     received_event = ThreadingEvent()
-    collector.event_publisher.on_fetch_stream_event.subscribe(
+    collector.on_fetch_stream_event.subscribe(
         lambda event: (captured_events.append(event), received_event.set())
     )
 
@@ -148,7 +146,7 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
     assert init_script == page.evaluated_script
     assert "response.clone()" in init_script
     assert binding is not None
-    collector.event_publisher.start()
+    collector._event_publisher.start()
     binding(
         {},
         {
@@ -161,7 +159,7 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
             "chunk_index": 0,
             "timestamp_ms": 1234.5,
             "elapsed_ms": 12.5,
-            "data": "data: hello\\n\\n",
+            "text": "data: hello\\n\\n",
         },
     )
     try:
@@ -170,16 +168,47 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
         collector.terminate()
 
     event_path = network_folder / "fetch_stream.jsonl"
-    events = [FetchStreamEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
+    events = [FetchTextStreamEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
     assert len(events) == 1
     assert events[0].event_type == "chunk"
-    assert events[0].data == "data: hello\\n\\n"
+    assert events[0].text == "data: hello\\n\\n"
     assert captured_events == events
+
+
+def test_fetch_stream_event_predicate_filters_capture(tmp_path: Path):
+    output_folder = tmp_path / "filtered-fetch-stream"
+    collector = DevtoolsService(
+        cast(Page, FakePage()),
+        output_folder,
+        policy=DevtoolsLogPolicy.from_any(
+            categories=["fetch_stream"],
+            fetch_stream_event_predicates=lambda event: event.event_type == "chunk",
+        ),
+        save_memory=True,
+    )
+    (output_folder / "network").mkdir()
+    collector._on_fetch_stream_event(
+        {},
+        {
+            "stream_id": "fetch-1",
+            "event_type": "complete",
+            "url": "https://example.com/stream",
+            "method": "GET",
+            "status": 200,
+            "chunk_index": 0,
+            "timestamp_ms": 1000,
+            "elapsed_ms": 10,
+        },
+    )
+
+    assert collector.network_log is not None
+    assert collector.network_log.fetch_stream_events == []
+    assert not (output_folder / "network" / "fetch_stream.jsonl").exists()
 
 
 def test_default_policy_skips_fetch_stream_capture(tmp_path: Path):
     output_folder = tmp_path / "default-policy"
-    collector = DevtoolsUser(cast(Page, FakePage()), output_folder)
+    collector = DevtoolsService(cast(Page, FakePage()), output_folder)
     collector._start_network(FakeCDPClient())
     collector._on_fetch_stream_event(
         {},
@@ -200,19 +229,18 @@ def test_default_policy_skips_fetch_stream_capture(tmp_path: Path):
 
 
 def test_collects_event_stream_messages(tmp_path: Path):
-
     output_folder = tmp_path / "debug"
-    collector = DevtoolsUser(cast(Page, object()), output_folder)
+    collector = DevtoolsService(cast(Page, object()), output_folder)
     captured_events = []
     received_event = ThreadingEvent()
-    collector.event_publisher.on_server_sent_event.subscribe(
+    collector.on_server_sent_event.subscribe(
         lambda event: (captured_events.append(event), received_event.set())
     )
     client = FakeCDPClient()
     collector._start_network(client)
     assert "Network.eventSourceMessageReceived" in client.handlers_when_enabled
 
-    collector.event_publisher.start()
+    collector._event_publisher.start()
     client.emit(
         "Network.requestWillBeSent",
         {
@@ -253,7 +281,7 @@ def test_collects_event_stream_messages(tmp_path: Path):
 
 def test_http_transaction_policy_filters_saved_logs(tmp_path: Path):
     output_folder = tmp_path / "filtered-http"
-    collector = DevtoolsUser(
+    collector = DevtoolsService(
         cast(Page, object()),
         output_folder,
         policy=DevtoolsLogPolicy.from_any(
@@ -288,7 +316,7 @@ def test_http_transaction_policy_filters_saved_logs(tmp_path: Path):
 
 def test_websocket_policy_filters_connections(tmp_path: Path):
     output_folder = tmp_path / "filtered-websocket"
-    collector = DevtoolsUser(
+    collector = DevtoolsService(
         cast(Page, object()),
         output_folder,
         policy=DevtoolsLogPolicy.from_any(
@@ -308,19 +336,17 @@ def test_websocket_policy_filters_connections(tmp_path: Path):
 
     event_paths = list((output_folder / "network" / "websocket").glob("*.jsonl"))
     assert len(event_paths) == 1
-    events = [WebSocketEvent.model_validate_json(line) for line in event_paths[0].read_text().splitlines()]
+    events = [WebsocketEvent.model_validate_json(line) for line in event_paths[0].read_text().splitlines()]
     assert [event.event_type for event in events] == ["created", "frame_received", "closed"]
 
 
 def test_server_sent_events_policy_filters_event_streams(tmp_path: Path):
     output_folder = tmp_path / "filtered-sse"
-    collector = DevtoolsUser(
+    collector = DevtoolsService(
         cast(Page, object()),
         output_folder,
         policy=DevtoolsLogPolicy.from_any(
-            server_sent_events_predicates=lambda events: any(
-                event.event_name == "important" for event in events.events
-            )
+            server_sent_events_predicates=lambda events: any(event.event_name == "important" for event in events.events)
         ),
     )
     client = FakeCDPClient()
@@ -345,10 +371,8 @@ def test_server_sent_events_policy_filters_event_streams(tmp_path: Path):
 
 
 def test_collects_websocket_lifecycle_and_frames(tmp_path: Path):
-
-
     output_folder = tmp_path / "debug"
-    collector = DevtoolsUser(cast(Page, object()), output_folder)
+    collector = DevtoolsService(cast(Page, object()), output_folder)
     client = FakeCDPClient()
     collector._start_network(client)
     assert "Network.webSocketFrameReceived" in client.handlers_when_enabled
@@ -369,7 +393,7 @@ def test_collects_websocket_lifecycle_and_frames(tmp_path: Path):
 
     event_paths = list((output_folder / "network" / "websocket").glob("*.jsonl"))
     assert len(event_paths) == 1
-    events = [WebSocketEvent.model_validate_json(line) for line in event_paths[0].read_text().splitlines()]
+    events = [WebsocketEvent.model_validate_json(line) for line in event_paths[0].read_text().splitlines()]
     assert [event.event_type for event in events] == [
         "created",
         "frame_received",

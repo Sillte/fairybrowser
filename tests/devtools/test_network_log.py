@@ -3,11 +3,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from fairybrowser.devtools.models import FetchStreamEvent
+from fairybrowser.devtools import NetworkLog
+from fairybrowser.devtools.models.fetch_text_stream_event import FetchTextStreamEvent
 from fairybrowser.devtools.models.http_transaction import HTTPRequest, HTTPResponse, HTTPTransaction
-from fairybrowser.devtools.models.network_log import NetworkLog
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
-from fairybrowser.devtools.models.websockets import WebSocketEvent, WebSocketFrame
+from fairybrowser.devtools.models.websockets import WebsocketEvent, WebsocketFrame
 
 
 def _write_jsonl(path: Path, events: list[BaseModel]) -> None:
@@ -23,9 +23,7 @@ def test_network_log_loads_and_groups_saved_logs(tmp_path: Path):
         request=HTTPRequest(url="https://example.com/api", method="POST", body=b'{"value": 1}'),
         response=HTTPResponse(status=200, body=b'{"ok": true}'),
     )
-    (tmp_path / "request.json").write_text(
-        json.dumps([transaction.model_dump(mode="json")]), encoding="utf-8"
-    )
+    (tmp_path / "request.json").write_text(json.dumps([transaction.model_dump(mode="json")]), encoding="utf-8")
     nested_transaction = HTTPTransaction(request=HTTPRequest(url="https://example.com/next", method="GET"))
     (network_folder / "nested.json").write_text(
         json.dumps([nested_transaction.model_dump(mode="json")]), encoding="utf-8"
@@ -45,7 +43,7 @@ def test_network_log_loads_and_groups_saved_logs(tmp_path: Path):
     _write_jsonl(
         network_folder / "fetch_stream.jsonl",
         [
-            FetchStreamEvent(
+            FetchTextStreamEvent(
                 stream_id="fetch-1",
                 event_type="chunk",
                 url="https://example.com/stream",
@@ -54,18 +52,18 @@ def test_network_log_loads_and_groups_saved_logs(tmp_path: Path):
                 chunk_index=0,
                 timestamp_ms=1000,
                 elapsed_ms=5,
-                data="chunk",
+                text="chunk",
             )
         ],
     )
     _write_jsonl(
         network_folder / "websocket" / "ws-1-hash.jsonl",
         [
-            WebSocketEvent(request_id="ws-1", event_type="created", url="wss://example.com/chat"),
-            WebSocketEvent(
+            WebsocketEvent(request_id="ws-1", event_type="created", url="wss://example.com/chat"),
+            WebsocketEvent(
                 request_id="ws-1",
                 event_type="frame_received",
-                frame=WebSocketFrame(opcode=1, mask=False, payload_data="hello"),
+                frame=WebsocketFrame(opcode=1, mask=False, payload_data="hello"),
             ),
         ],
     )
@@ -73,6 +71,8 @@ def test_network_log_loads_and_groups_saved_logs(tmp_path: Path):
     snapshot = log.snapshot()
 
     assert len(snapshot.http_transactions) == 2
+    assert len(log.get_http_transactions(method="POST")) == 1
+    assert len(log.get_http_transactions(path="/API")) == 1
     api_transaction = next(
         transaction for transaction in snapshot.http_transactions if transaction.request.url.endswith("/api")
     )
@@ -84,6 +84,25 @@ def test_network_log_loads_and_groups_saved_logs(tmp_path: Path):
     connection = snapshot.websocket_connections[0]
     assert connection.events[1].frame is not None
     assert connection.events[1].frame.payload_data == "hello"
+
+
+def test_fetch_text_stream_event_reads_legacy_data_key():
+    event = FetchTextStreamEvent.model_validate(
+        {
+            "stream_id": "fetch-1",
+            "event_type": "chunk",
+            "url": "https://example.com/stream",
+            "method": "GET",
+            "status": 200,
+            "chunk_index": 0,
+            "timestamp_ms": 1000,
+            "elapsed_ms": 5,
+            "data": "legacy text",
+        }
+    )
+
+    assert event.text == "legacy text"
+    assert '"text":"legacy text"' in event.model_dump_json()
 
 
 def test_network_log_handles_missing_optional_logs(tmp_path: Path):

@@ -59,12 +59,12 @@ class Event[T]:
         return self.subscribe(listener)
 
     def once(self) -> Event[T]:
-        from pytoy_llm.shared.event import utils
+        from fairybrowser.shared.event import utils
 
         return utils.once(self)
 
     def map[R](self, transform: Callable[[T], R]) -> Event[R]:
-        from pytoy_llm.shared.event import utils
+        from fairybrowser.shared.event import utils
 
         return utils.map_event(self, transform)
 
@@ -87,7 +87,7 @@ class Event[T]:
     ) -> Event[T]: ...
 
     def filter(self, predicate: Callable[[T], bool]) -> Event[Any]:
-        from pytoy_llm.shared.event import utils
+        from fairybrowser.shared.event import utils
 
         return utils.filter(self, predicate)
 

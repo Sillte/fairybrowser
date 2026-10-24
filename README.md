@@ -66,21 +66,25 @@ with sync_page(info) as page:
     print(page.title())
 ```
 
-## Devtools: HTTPTransactionAnalyzer
+## Devtools
 
-The `devtools` helpers collect selected CDP network events and store them under a debug folder. By default, HTTP, EventSource, and WebSocket logs are enabled; fetch stream capture and console logging are disabled. Configure `DevtoolsUser` with a `DevtoolsLogPolicy` to change the captured categories. HTTP transactions are saved as JSON files; EventSource and WebSocket events are appended to separate JSON Lines files per request ID under `network/event_stream/` and `network/websocket/`, with sanitized, hashed filenames. Fetch response chunks are appended to `network/fetch_stream.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `HTTPTransactionAnalyzer` reads the HTTP logs and converts each exchange to an `HTTPTransaction` containing an `HTTPRequest` and an optional `HTTPResponse`.
+The `devtools` helpers collect selected CDP network events and store them under a debug folder. By default, HTTP, EventSource, and Websocket logs are enabled; fetch stream capture and console logging are disabled. Configure `DevtoolsService` with a `DevtoolsLogPolicy` to change the captured categories. HTTP transactions are saved as JSON files; EventSource and Websocket events are appended to separate JSON Lines files per request ID under `network/event_stream/` and `network/websocket/`, with sanitized, hashed filenames. Fetch response chunks are appended to `network/fetch_stream.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `NetworkLog.load()` loads the saved exchanges and events as typed models.
 
-`DevtoolsUser.event_publisher` also exposes typed events for live notifications. Subscribe before starting the collector, and terminate it when finished:
+`DevtoolsService` also exposes typed events for live notifications. Subscribe before starting the service, and terminate it when finished. Use `fetch_stream_event_predicates` to filter Fetch events; multiple predicates use any-match semantics:
 
 ```python
-devtools = DevtoolsUser(page, "./debug", policy=DevtoolsLogPolicy.from_any(policy_mode="all"))
-devtools.event_publisher.on_fetch_stream_event.subscribe(
-    lambda event: print("Fetch chunk:", event.url, event.data)
+policy = DevtoolsLogPolicy.from_any(
+    policy_mode="all",
+    fetch_stream_event_predicates=lambda event: event.event_type == "chunk",
 )
-devtools.event_publisher.on_server_sent_event.subscribe(
+devtools = DevtoolsService(page, "./debug", policy=policy)
+devtools.on_fetch_stream_event.subscribe(
+    lambda event: print("Fetch chunk:", event.url, event.text)
+)
+devtools.on_server_sent_event.subscribe(
     lambda event: print("Server-Sent Event:", event.data)
 )
-devtools.event_publisher.on_http_transaction.subscribe(
+devtools.on_http_transaction.subscribe(
     lambda transaction: print("HTTP:", transaction.request.method, transaction.request.url)
 )
 devtools.start()
@@ -93,25 +97,19 @@ finally:
 Typical usage:
 
 ```python
-import json
 from fairybrowser import sync_page
-from fairybrowser.devtools.collectors import DevtoolsUser
-from fairybrowser.devtools.analyzers import HTTPTransactionAnalyzer
+from fairybrowser.devtools import DevtoolsService, NetworkLog
 
 with sync_page() as page:
-    DevtoolsUser(page, "./debug").start()
-    page.goto("about:blank")
-    test_url = "https://httpbin.org/post"
-    payload = {"foo": "bar", "num": 123}
-    page.evaluate(f'''
-        fetch("{test_url}", {{
-            method: "POST",
-            headers: {{ "Content-Type": "application/json" }},
-            body: JSON.stringify({json.dumps(payload)})
-        }});
-    ''')
-    page.wait_for_timeout(3000)
-transactions = HTTPTransactionAnalyzer("./debug").get_transactions()
+    service = DevtoolsService(page, "./debug")
+    service.start()
+    try:
+        page.goto("https://example.com")
+    finally:
+        service.terminate()
+
+network_log = NetworkLog.load("./debug")
+transactions = network_log.get_http_transactions(method="POST", path="/")
 for transaction in transactions:
     request_data = transaction.request.body_json
     response_data = transaction.response.body_json if transaction.response else None
@@ -120,17 +118,15 @@ for transaction in transactions:
 
 Notes:
 
-- Use `DevtoolsLogPolicy.from_any(policy_mode="all")` to enable every category, including fetch stream and console capture, then pass it as `DevtoolsUser(page, "./debug", policy=policy)`.
-- Set `save_memory=True` to retain captured network logs in `collector.network_log`; call `.snapshot()` for an immutable tuple-based view. `output_folder` may also be supplied to write logs to disk, and is initialized (cleared) on collector construction.
-- Import `NetworkLog` from `fairybrowser.devtools.models.network_log` and call `NetworkLog.load("./debug")` to load saved files together. It groups HTTP transactions, Server-Sent Events, and WebSocket connections while preserving fetch stream events.
-- HTTP transaction, WebSocket connection, and Server-Sent Events predicates can filter which grouped logs are saved.
-- `HTTPTransactionAnalyzer` accepts the path to the log folder (it will assert the folder exists).
-- It automatically finds JSON files under the folder and under `network/` within the folder.
+- Use `DevtoolsLogPolicy.from_any(policy_mode="all")` to enable every category, including fetch stream and console capture, then pass it as `DevtoolsService(page, "./debug", policy=policy)`.
+- Set `save_memory=True` to retain captured network logs in `service.network_log`; call `.snapshot()` for an immutable tuple-based view. `output_folder` may also be supplied to write logs to disk, and is initialized (cleared) on service construction.
+- Import `NetworkLog` from `fairybrowser.devtools` and call `NetworkLog.load("./debug")` to load saved files together. It groups HTTP transactions, Server-Sent Events, and Websocket connections while preserving fetch stream events.
+- HTTP transaction, Websocket connection, and Server-Sent Events predicates can filter which grouped logs are saved.
+- Use `network_log.get_http_transactions(method="POST", path="/api")` to filter loaded HTTP transactions by case-insensitive method and URL substring.
+- Import `DevtoolsService`, `DevtoolsLogPolicy`, `NetworkLog`, and the public event/model types from `fairybrowser.devtools`; import `sync_browser`, `sync_page`, `BrowserInfo`, `MousePlayer`, and `MouseRecorder` from `fairybrowser`. `DevtoolsService` is also available from the top-level package.
 - `HTTPTransaction.request` contains the request method, URL, headers, and bytes body.
 - `HTTPTransaction.response` is `None` when no response data was recorded; otherwise it contains the status, headers, and bytes body.
 - `HTTPRequest.body_json` and `HTTPResponse.body_json` attempt to decode JSON bodies; if decoding fails they return the raw text.
-
-I added unit tests for the analyzer in `tests/test_analyzers.py` which validate parsing and filtering by method/path.
 
 
 

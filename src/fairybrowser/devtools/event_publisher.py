@@ -2,13 +2,13 @@ from queue import Queue
 from threading import RLock, Thread, current_thread
 from typing import Literal, assert_never
 
-from fairybrowser.devtools.models import FetchStreamEvent
+from fairybrowser.devtools.models.fetch_text_stream_event import FetchTextStreamEvent
 from fairybrowser.devtools.models.http_transaction import HTTPTransaction
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
-from fairybrowser.devtools.models.websockets import WebSocketConnection, WebSocketEvent
+from fairybrowser.devtools.models.websockets import WebsocketConnection, WebsocketEvent
 from fairybrowser.shared.event import Event, EventEmitter
 
-type BrowserEvent = HTTPTransaction | FetchStreamEvent | ServerSentEvent | WebSocketEvent | WebSocketConnection
+type BrowserEvent = HTTPTransaction | FetchTextStreamEvent | ServerSentEvent | WebsocketEvent | WebsocketConnection
 type Status = Literal["created", "running", "terminated"]
 
 
@@ -16,10 +16,10 @@ class EventPublisher:
     def __init__(self) -> None:
         self._queue = Queue[BrowserEvent | None]()
         self._http_transaction_emitter = EventEmitter[HTTPTransaction]()
-        self._fetch_stream_event_emitter = EventEmitter[FetchStreamEvent]()
+        self._fetch_stream_event_emitter = EventEmitter[FetchTextStreamEvent]()
         self._server_sent_event_emitter = EventEmitter[ServerSentEvent]()
-        self._websocket_event_emitter = EventEmitter[WebSocketEvent]()
-        self._websocket_connection_emitter = EventEmitter[WebSocketConnection]()
+        self._websocket_event_emitter = EventEmitter[WebsocketEvent]()
+        self._websocket_connection_emitter = EventEmitter[WebsocketConnection]()
         self._status: Status = "created"
         self._thread = Thread(target=self._loop, daemon=True)
         self._lock = RLock()
@@ -32,7 +32,7 @@ class EventPublisher:
         return self._http_transaction_emitter.event
 
     @property
-    def on_fetch_stream_event(self) -> Event[FetchStreamEvent]:
+    def on_fetch_stream_event(self) -> Event[FetchTextStreamEvent]:
         with self._lock:
             if self._status != "created":
                 raise ValueError("Subscription is possible only before `start`.")
@@ -46,14 +46,14 @@ class EventPublisher:
         return self._server_sent_event_emitter.event
 
     @property
-    def on_websocket_event(self) -> Event[WebSocketEvent]:
+    def on_websocket_event(self) -> Event[WebsocketEvent]:
         with self._lock:
             if self._status != "created":
                 raise ValueError("Subscription is possible only before `start`.")
         return self._websocket_event_emitter.event
 
     @property
-    def on_websocket_connection(self) -> Event[WebSocketConnection]:
+    def on_websocket_connection(self) -> Event[WebsocketConnection]:
         with self._lock:
             if self._status != "created":
                 raise ValueError("Subscription is possible only before `start`.")
@@ -86,13 +86,13 @@ class EventPublisher:
             match browser_event:
                 case HTTPTransaction():
                     self._http_transaction_emitter.fire(browser_event)
-                case FetchStreamEvent():
+                case FetchTextStreamEvent():
                     self._fetch_stream_event_emitter.fire(browser_event)
                 case ServerSentEvent():
                     self._server_sent_event_emitter.fire(browser_event)
-                case WebSocketEvent():
+                case WebsocketEvent():
                     self._websocket_event_emitter.fire(browser_event)
-                case WebSocketConnection():
+                case WebsocketConnection():
                     self._websocket_connection_emitter.fire(browser_event)
                 case _:
                     assert_never(browser_event)
