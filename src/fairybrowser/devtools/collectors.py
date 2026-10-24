@@ -17,9 +17,10 @@ from playwright.sync_api import BrowserContext, Frame, Page
 from fairybrowser.devtools.models import (
     FetchStreamEvent,
 )
-from fairybrowser.devtools.models.http_transaction import RawCommunicationInfo
-from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
-from fairybrowser.devtools.models.websockets import WebSocketEvent, WebSocketFrame
+from fairybrowser.devtools.models.http_transaction import HTTPTransaction, RawCommunicationInfo
+from fairybrowser.devtools.models.policy import DevtoolsLogPolicy
+from fairybrowser.devtools.models.server_sent_events import ServerSentEvent, ServerSentEvents
+from fairybrowser.devtools.models.websockets import WebSocketConnection, WebSocketEvent, WebSocketFrame
 
 _FETCH_STREAM_CAPTURE_SCRIPT = r"""
 (() => {
@@ -150,7 +151,12 @@ def _append_event(
 
 
 class DevtoolsUser:
-    def __init__(self, page: Page | Frame, output_folder: str | Path | None = None):
+    def __init__(
+        self,
+        page: Page | Frame,
+        output_folder: str | Path | None = None,
+        policy: DevtoolsLogPolicy | None = None,
+    ):
         if isinstance(page, Frame):
             page = page.page
         if not output_folder:
@@ -161,14 +167,17 @@ class DevtoolsUser:
         _init_folder(output_folder)
         self.output_folder = output_folder
         self.page = page
+        self.policy = policy or DevtoolsLogPolicy.from_any()
         self._fetch_stream_capture_started = False
 
     def start(self):
         context = self._to_context(self.page)
         client = context.new_cdp_session(self.page)
         self._start_network(client)
-        self._start_console(client)
-        self._start_fetch_stream_capture()
+        if "console" in self.policy.categories:
+            self._start_console(client)
+        if "fetch_stream" in self.policy.categories:
+            self._start_fetch_stream_capture()
 
     def _start_fetch_stream_capture(self):
         if self._fetch_stream_capture_started:
@@ -179,6 +188,8 @@ class DevtoolsUser:
         self._fetch_stream_capture_started = True
 
     def _on_fetch_stream_event(self, source: dict[str, Any], payload: dict[str, Any]):
+        if "fetch_stream" not in self.policy.categories:
+            return
         frame = source.get("frame")
         event = FetchStreamEvent.model_validate({**payload, "frame_url": getattr(frame, "url", None)})
         path = self.output_folder / "network" / "fetch_stream.jsonl"
@@ -188,13 +199,23 @@ class DevtoolsUser:
     # Network
     # ----------------------
     def _start_network(self, client):
-        redirect_map: dict[str, list[RawCommunicationInfo]] = {}
+        capture_http = "http" in self.policy.categories
+        capture_event_source = "event_source" in self.policy.categories
+        capture_websocket = "websocket" in self.policy.categories
         network_folder = self.output_folder / "network"
         _init_folder(network_folder)
+        if not (capture_http or capture_event_source or capture_websocket):
+            return
+
+        redirect_map: dict[str, list[RawCommunicationInfo]] = {}
         event_stream_path = network_folder / "event_stream.jsonl"
         websocket_path = network_folder / "websocket.jsonl"
         request_urls: dict[str, str] = {}
         websocket_urls: dict[str, str] = {}
+        server_events: dict[str, list[ServerSentEvent]] = {}
+        server_events_saved: dict[str, int] = {}
+        websocket_events: dict[str, list[WebSocketEvent]] = {}
+        websocket_events_saved: dict[str, int] = {}
 
         def on_request_will_be_sent(params):
             request_id = params["requestId"]
@@ -202,6 +223,8 @@ class DevtoolsUser:
             method = request["method"]
             url = request["url"]
             request_urls[request_id] = url
+            if not capture_http:
+                return
             headers = request.get("headers", {})
             post_data = request.get("postData")
             if isinstance(post_data, str):
@@ -264,7 +287,11 @@ class DevtoolsUser:
                 except Exception:
                     chain[-1].response_body = b"<not available>"
 
-                _dump_request(request_id, chain, network_folder)
+                accepted_infos = [
+                    info for info in chain if self.policy.should_save_transaction(HTTPTransaction.from_raw(info))
+                ]
+                if accepted_infos:
+                    _dump_request(request_id, accepted_infos, network_folder)
                 del redirect_map[request_id]
             request_urls.pop(request_id, None)
 
@@ -278,7 +305,14 @@ class DevtoolsUser:
                 event_id=params.get("eventId", ""),
                 data=params["data"],
             )
-            _append_event(event_stream_path, event)
+            events = server_events.setdefault(request_id, [])
+            events.append(event)
+            grouped_events = ServerSentEvents(request_id=request_id, events=events)
+            if self.policy.should_save_server_sent_events(grouped_events):
+                saved_count = server_events_saved.get(request_id, 0)
+                for accepted_event in events[saved_count:]:
+                    _append_event(event_stream_path, accepted_event)
+                server_events_saved[request_id] = len(events)
 
         websocket_event_names = {
             "Network.webSocketCreated": "created",
@@ -319,22 +353,35 @@ class DevtoolsUser:
                         if key not in {"requestId", "timestamp", "url", "response"}
                     },
                 )
-                _append_event(websocket_path, event)
+                events = websocket_events.setdefault(request_id, [])
+                events.append(event)
+                connection = WebSocketConnection(request_id=request_id, events=events)
+                if self.policy.should_save_websocket_connection(connection):
+                    saved_count = websocket_events_saved.get(request_id, 0)
+                    for accepted_event in events[saved_count:]:
+                        _append_event(websocket_path, accepted_event)
+                    websocket_events_saved[request_id] = len(events)
 
                 if event_type == "closed":
                     websocket_urls.pop(request_id, None)
+                    websocket_events.pop(request_id, None)
+                    websocket_events_saved.pop(request_id, None)
 
             return _error_catcher(on_websocket_event)
 
-        client.on("Network.requestWillBeSent", _error_catcher(on_request_will_be_sent))
-        client.on("Network.responseReceived", _error_catcher(on_response_received))
-        client.on("Network.loadingFinished", _error_catcher(on_loading_finished))
-        client.on(
-            "Network.eventSourceMessageReceived",
-            _error_catcher(on_event_source_message),
-        )
-        for event_name, event_type in websocket_event_names.items():
-            client.on(event_name, make_websocket_handler(event_type))
+        if capture_http or capture_event_source:
+            client.on("Network.requestWillBeSent", _error_catcher(on_request_will_be_sent))
+        if capture_http:
+            client.on("Network.responseReceived", _error_catcher(on_response_received))
+            client.on("Network.loadingFinished", _error_catcher(on_loading_finished))
+        if capture_event_source:
+            client.on(
+                "Network.eventSourceMessageReceived",
+                _error_catcher(on_event_source_message),
+            )
+        if capture_websocket:
+            for event_name, event_type in websocket_event_names.items():
+                client.on(event_name, make_websocket_handler(event_type))
         client.send("Network.enable")
 
     # ----------------------

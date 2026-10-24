@@ -5,9 +5,8 @@ from typing import cast
 from playwright.sync_api import Page
 
 from fairybrowser.devtools.collectors import DevtoolsUser
-from fairybrowser.devtools.models import (
-    FetchStreamEvent,
-)
+from fairybrowser.devtools.models import FetchStreamEvent
+from fairybrowser.devtools.models.policy import DevtoolsLogPolicy
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
 from fairybrowser.devtools.models.websockets import WebSocketEvent
 
@@ -49,7 +48,9 @@ class FakePage:
 
 def test_captures_fetch_stream_chunks(tmp_path: Path):
     output_folder = tmp_path / "debug"
-    collector = DevtoolsUser(cast(Page, FakePage()), output_folder)
+    collector = DevtoolsUser(
+        cast(Page, FakePage()), output_folder, policy=DevtoolsLogPolicy.from_any(policy_mode="all")
+    )
     network_folder = output_folder / "network"
     network_folder.mkdir()
 
@@ -85,7 +86,30 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
     assert events[0].data == "data: hello\\n\\n"
 
 
+def test_default_policy_skips_fetch_stream_capture(tmp_path: Path):
+    output_folder = tmp_path / "default-policy"
+    collector = DevtoolsUser(cast(Page, FakePage()), output_folder)
+    collector._start_network(FakeCDPClient())
+    collector._on_fetch_stream_event(
+        {},
+        {
+            "stream_id": "fetch-1",
+            "event_type": "chunk",
+            "url": "https://example.com/stream",
+            "method": "GET",
+            "status": 200,
+            "chunk_index": 0,
+            "timestamp_ms": 1000,
+            "elapsed_ms": 10,
+            "data": "ignored",
+        },
+    )
+
+    assert not (output_folder / "network" / "fetch_stream.jsonl").exists()
+
+
 def test_collects_event_stream_messages(tmp_path: Path):
+
     output_folder = tmp_path / "debug"
     collector = DevtoolsUser(cast(Page, object()), output_folder)
     client = FakeCDPClient()
@@ -121,7 +145,95 @@ def test_collects_event_stream_messages(tmp_path: Path):
     assert event.event_id == "42"
 
 
+def test_http_transaction_policy_filters_saved_logs(tmp_path: Path):
+    output_folder = tmp_path / "filtered-http"
+    collector = DevtoolsUser(
+        cast(Page, object()),
+        output_folder,
+        policy=DevtoolsLogPolicy.from_any(
+            transaction_predicates=lambda transaction: "/keep" in transaction.request.url
+        ),
+    )
+    client = FakeCDPClient()
+    collector._start_network(client)
+
+    for request_id, path in (("keep", "keep"), ("drop", "drop")):
+        client.emit(
+            "Network.requestWillBeSent",
+            {
+                "requestId": request_id,
+                "request": {"method": "GET", "url": f"https://example.com/{path}"},
+            },
+        )
+        client.emit(
+            "Network.responseReceived",
+            {"requestId": request_id, "response": {"status": 200, "headers": {}}},
+        )
+        client.emit("Network.loadingFinished", {"requestId": request_id})
+
+    saved_logs = list((output_folder / "network").glob("*.json"))
+    assert [path.stem for path in saved_logs] == ["keep"]
+
+
+def test_websocket_policy_filters_connections(tmp_path: Path):
+    output_folder = tmp_path / "filtered-websocket"
+    collector = DevtoolsUser(
+        cast(Page, object()),
+        output_folder,
+        policy=DevtoolsLogPolicy.from_any(
+            websocket_connection_predicates=lambda connection: any(
+                event.event_type == "frame_received" for event in connection.events
+            )
+        ),
+    )
+    client = FakeCDPClient()
+    collector._start_network(client)
+    client.emit("Network.webSocketCreated", {"requestId": "ws-1", "url": "wss://example.com/chat"})
+    client.emit(
+        "Network.webSocketFrameReceived",
+        {"requestId": "ws-1", "response": {"opcode": 1, "mask": False, "payloadData": "hello"}},
+    )
+    client.emit("Network.webSocketClosed", {"requestId": "ws-1"})
+
+    event_path = output_folder / "network" / "websocket.jsonl"
+    events = [WebSocketEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
+    assert [event.event_type for event in events] == ["created", "frame_received", "closed"]
+
+
+def test_server_sent_events_policy_filters_event_streams(tmp_path: Path):
+    output_folder = tmp_path / "filtered-sse"
+    collector = DevtoolsUser(
+        cast(Page, object()),
+        output_folder,
+        policy=DevtoolsLogPolicy.from_any(
+            server_sent_events_predicates=lambda events: any(
+                event.event_name == "important" for event in events.events
+            )
+        ),
+    )
+    client = FakeCDPClient()
+    collector._start_network(client)
+    client.emit(
+        "Network.requestWillBeSent",
+        {"requestId": "sse-1", "request": {"method": "GET", "url": "https://example.com/events"}},
+    )
+    client.emit(
+        "Network.eventSourceMessageReceived",
+        {"requestId": "sse-1", "timestamp": 1.0, "eventName": "ignore", "data": "no"},
+    )
+    client.emit(
+        "Network.eventSourceMessageReceived",
+        {"requestId": "sse-1", "timestamp": 2.0, "eventName": "important", "data": "yes"},
+    )
+
+    event_path = output_folder / "network" / "event_stream.jsonl"
+    events = [ServerSentEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
+    assert [event.data for event in events] == ["no", "yes"]
+
+
 def test_collects_websocket_lifecycle_and_frames(tmp_path: Path):
+
+
     output_folder = tmp_path / "debug"
     collector = DevtoolsUser(cast(Page, object()), output_folder)
     client = FakeCDPClient()
