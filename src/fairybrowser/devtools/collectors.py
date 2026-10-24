@@ -1,5 +1,4 @@
 import base64
-import datetime
 import hashlib
 import json
 import logging
@@ -8,6 +7,7 @@ import shutil
 import time
 from asyncio.exceptions import CancelledError
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,8 @@ from playwright.sync_api import BrowserContext, Frame, Page
 from fairybrowser.devtools.models import (
     FetchStreamEvent,
 )
-from fairybrowser.devtools.models.http_transaction import HTTPTransaction, RawCommunicationInfo
+from fairybrowser.devtools.models.http_transaction import HTTPRequest, HTTPResponse, HTTPTransaction
+from fairybrowser.devtools.models.network_log import NetworkLog
 from fairybrowser.devtools.models.policy import DevtoolsLogPolicy
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent, ServerSentEvents
 from fairybrowser.devtools.models.websockets import WebSocketConnection, WebSocketEvent, WebSocketFrame
@@ -125,20 +126,52 @@ def _error_catcher(function: Callable) -> Callable:
     return _wrapped
 
 
-def _dump_request(request_id: str, com_infos: list[RawCommunicationInfo], output_folder: Path):
-    def _sanitize_or_hash_filename(s: str) -> str:
-        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", s)
-        if len(sanitized) > 50:
-            hashed = hashlib.sha256(s.encode()).hexdigest()[:16]
-            return hashed
-        return sanitized
+@dataclass
+class _RawCommunicationInfo:
+    url: str
+    method: str
+    status: int | None = None
+    timing: dict[str, Any] | None = None
+    request_headers: dict[str, Any] = field(default_factory=dict)
+    response_headers: dict[str, Any] = field(default_factory=dict)
+    request_body: bytes | None = None
+    response_body: bytes | None = None
 
-    stem = _sanitize_or_hash_filename(request_id)
+
+def _to_http_transaction(raw: _RawCommunicationInfo) -> HTTPTransaction:
+    time_value = 0.0
+    if raw.timing:
+        for key in ("requestTime", "startTime", "sendStart"):
+            if key in raw.timing:
+                try:
+                    time_value = float(raw.timing[key])
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+    request_body = raw.request_body or b""
+    response_body = raw.response_body or b""
+    response = None
+    if raw.status is not None or raw.response_headers or raw.response_body is not None:
+        response = HTTPResponse(status=raw.status, headers=raw.response_headers, body=response_body)
+    return HTTPTransaction(
+        request=HTTPRequest(
+            url=raw.url,
+            method=raw.method,
+            headers=raw.request_headers,
+            body=request_body,
+        ),
+        response=response,
+        time=time_value,
+    )
+
+
+def _dump_request(request_id: str, transactions: list[HTTPTransaction], output_folder: Path):
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", request_id)
+    stem = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:16] if len(sanitized) > 50 else sanitized
     path = output_folder / f"{stem}.json"
-
-    data = [elem.model_dump() for elem in com_infos]
+    data = [transaction.model_dump(mode="json") for transaction in transactions]
     path.write_text(json.dumps(data, indent=4, ensure_ascii=False))
-
     logging.info(f"Saved network log to {path}")
 
 
@@ -150,24 +183,39 @@ def _append_event(
         file.write(event.model_dump_json() + "\n")
 
 
+def _safe_request_id_stem(request_id: str) -> str:
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", request_id)[:40] or "request"
+    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+    return f"{safe_id}-{digest}"
+
+
+def _append_id_event(
+    folder: Path | None,
+    request_id: str,
+    event: ServerSentEvent | WebSocketEvent,
+):
+    if folder is not None:
+        _append_event(folder / f"{_safe_request_id_stem(request_id)}.jsonl", event)
+
+
 class DevtoolsUser:
     def __init__(
         self,
         page: Page | Frame,
         output_folder: str | Path | None = None,
         policy: DevtoolsLogPolicy | None = None,
+        save_memory: bool = False,
     ):
+        if output_folder is None and not save_memory:
+            raise ValueError("Provide output_folder or set save_memory=True")
         if isinstance(page, Frame):
             page = page.page
-        if not output_folder:
-            timestr = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-            output_folder = Path(f"./debug_{timestr}")
-        else:
-            output_folder = Path(output_folder)
-        _init_folder(output_folder)
-        self.output_folder = output_folder
+        self.output_folder = Path(output_folder) if output_folder is not None else None
+        if self.output_folder is not None:
+            _init_folder(self.output_folder)
         self.page = page
-        self.policy = policy or DevtoolsLogPolicy.from_any()
+        self.policy = policy if policy is not None else DevtoolsLogPolicy.from_any()
+        self.network_log = NetworkLog() if save_memory else None
         self._fetch_stream_capture_started = False
 
     def start(self):
@@ -192,8 +240,11 @@ class DevtoolsUser:
             return
         frame = source.get("frame")
         event = FetchStreamEvent.model_validate({**payload, "frame_url": getattr(frame, "url", None)})
-        path = self.output_folder / "network" / "fetch_stream.jsonl"
-        _append_event(path, event)
+        if self.network_log is not None:
+            self.network_log.add_fetch_stream_event(event)
+        if self.output_folder is not None:
+            path = self.output_folder / "network" / "fetch_stream.jsonl"
+            _append_event(path, event)
 
     # ----------------------
     # Network
@@ -202,20 +253,25 @@ class DevtoolsUser:
         capture_http = "http" in self.policy.categories
         capture_event_source = "event_source" in self.policy.categories
         capture_websocket = "websocket" in self.policy.categories
-        network_folder = self.output_folder / "network"
-        _init_folder(network_folder)
+        network_folder = self.output_folder / "network" if self.output_folder is not None else None
+        if network_folder is not None:
+            _init_folder(network_folder)
         if not (capture_http or capture_event_source or capture_websocket):
             return
 
-        redirect_map: dict[str, list[RawCommunicationInfo]] = {}
-        event_stream_path = network_folder / "event_stream.jsonl"
-        websocket_path = network_folder / "websocket.jsonl"
+        redirect_map: dict[str, list[_RawCommunicationInfo]] = {}
+        event_stream_folder = network_folder / "event_stream" if capture_event_source and network_folder else None
+        websocket_folder = network_folder / "websocket" if capture_websocket and network_folder else None
+        if event_stream_folder is not None:
+            event_stream_folder.mkdir()
+        if websocket_folder is not None:
+            websocket_folder.mkdir()
         request_urls: dict[str, str] = {}
         websocket_urls: dict[str, str] = {}
         server_events: dict[str, list[ServerSentEvent]] = {}
-        server_events_saved: dict[str, int] = {}
+        accepted_server_event_requests: set[str] = set()
         websocket_events: dict[str, list[WebSocketEvent]] = {}
-        websocket_events_saved: dict[str, int] = {}
+        accepted_websocket_requests: set[str] = set()
 
         def on_request_will_be_sent(params):
             request_id = params["requestId"]
@@ -238,7 +294,7 @@ class DevtoolsUser:
                 resp = params["redirectResponse"]
                 prev_chain = redirect_map.get(request_id, [])
                 prev_chain.append(
-                    RawCommunicationInfo(
+                    _RawCommunicationInfo(
                         status=resp["status"],
                         url=resp["url"],
                         method=method,
@@ -253,7 +309,7 @@ class DevtoolsUser:
 
             chain = redirect_map.get(request_id, [])
             chain.append(
-                RawCommunicationInfo(
+                _RawCommunicationInfo(
                     url=url,
                     method=method,
                     request_headers=headers,
@@ -287,13 +343,25 @@ class DevtoolsUser:
                 except Exception:
                     chain[-1].response_body = b"<not available>"
 
-                accepted_infos = [
-                    info for info in chain if self.policy.should_save_transaction(HTTPTransaction.from_raw(info))
-                ]
-                if accepted_infos:
-                    _dump_request(request_id, accepted_infos, network_folder)
+                accepted_transactions = []
+                for info in chain:
+                    transaction = _to_http_transaction(info)
+                    if self.policy.should_save_transaction(transaction):
+                        accepted_transactions.append(transaction)
+                if self.network_log is not None:
+                    for transaction in accepted_transactions:
+                        self.network_log.add_http_transaction(transaction)
+                if accepted_transactions and network_folder is not None:
+                    _dump_request(request_id, accepted_transactions, network_folder)
                 del redirect_map[request_id]
             request_urls.pop(request_id, None)
+
+        def on_loading_failed(params):
+            request_id = params["requestId"]
+            request_urls.pop(request_id, None)
+            redirect_map.pop(request_id, None)
+            server_events.pop(request_id, None)
+            accepted_server_event_requests.discard(request_id)
 
         def on_event_source_message(params):
             request_id = params["requestId"]
@@ -305,14 +373,22 @@ class DevtoolsUser:
                 event_id=params.get("eventId", ""),
                 data=params["data"],
             )
+            if request_id in accepted_server_event_requests:
+                if self.network_log is not None:
+                    self.network_log.add_server_sent_event(event)
+                _append_id_event(event_stream_folder, request_id, event)
+                return
+
             events = server_events.setdefault(request_id, [])
             events.append(event)
             grouped_events = ServerSentEvents(request_id=request_id, events=events)
             if self.policy.should_save_server_sent_events(grouped_events):
-                saved_count = server_events_saved.get(request_id, 0)
-                for accepted_event in events[saved_count:]:
-                    _append_event(event_stream_path, accepted_event)
-                server_events_saved[request_id] = len(events)
+                for accepted_event in events:
+                    if self.network_log is not None:
+                        self.network_log.add_server_sent_event(accepted_event)
+                    _append_id_event(event_stream_folder, request_id, accepted_event)
+                server_events.pop(request_id, None)
+                accepted_server_event_requests.add(request_id)
 
         websocket_event_names = {
             "Network.webSocketCreated": "created",
@@ -353,19 +429,26 @@ class DevtoolsUser:
                         if key not in {"requestId", "timestamp", "url", "response"}
                     },
                 )
-                events = websocket_events.setdefault(request_id, [])
-                events.append(event)
-                connection = WebSocketConnection(request_id=request_id, events=events)
-                if self.policy.should_save_websocket_connection(connection):
-                    saved_count = websocket_events_saved.get(request_id, 0)
-                    for accepted_event in events[saved_count:]:
-                        _append_event(websocket_path, accepted_event)
-                    websocket_events_saved[request_id] = len(events)
+                if request_id in accepted_websocket_requests:
+                    if self.network_log is not None:
+                        self.network_log.add_websocket_event(event)
+                    _append_id_event(websocket_folder, request_id, event)
+                else:
+                    events = websocket_events.setdefault(request_id, [])
+                    events.append(event)
+                    connection = WebSocketConnection(request_id=request_id, events=events)
+                    if self.policy.should_save_websocket_connection(connection):
+                        for accepted_event in events:
+                            if self.network_log is not None:
+                                self.network_log.add_websocket_event(accepted_event)
+                            _append_id_event(websocket_folder, request_id, accepted_event)
+                        websocket_events.pop(request_id, None)
+                        accepted_websocket_requests.add(request_id)
 
                 if event_type == "closed":
                     websocket_urls.pop(request_id, None)
                     websocket_events.pop(request_id, None)
-                    websocket_events_saved.pop(request_id, None)
+                    accepted_websocket_requests.discard(request_id)
 
             return _error_catcher(on_websocket_event)
 
@@ -374,6 +457,8 @@ class DevtoolsUser:
         if capture_http:
             client.on("Network.responseReceived", _error_catcher(on_response_received))
             client.on("Network.loadingFinished", _error_catcher(on_loading_finished))
+        if capture_http or capture_event_source:
+            client.on("Network.loadingFailed", _error_catcher(on_loading_failed))
         if capture_event_source:
             client.on(
                 "Network.eventSourceMessageReceived",

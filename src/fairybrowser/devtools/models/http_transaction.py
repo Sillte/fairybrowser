@@ -13,6 +13,15 @@ class HTTPResponse(BaseModel, frozen=True):
     _json_cache: JsonValue = PrivateAttr(default=None)
     _json_cached: bool = PrivateAttr(default=False)
 
+    @field_validator("body", mode="before")
+    @classmethod
+    def _decode_body(cls, value: Any) -> bytes:
+        return _decode_body_from_json(value) or b""
+
+    @field_serializer("body")
+    def _encode_body(self, value: bytes) -> str | dict[str, str] | None:
+        return _encode_body_for_json(value)
+
     @property
     def body_text(self) -> str:
         return self.body.decode("utf-8", errors="replace")
@@ -37,6 +46,15 @@ class HTTPRequest(BaseModel, frozen=True):
     _json_cache: JsonValue = PrivateAttr(default=None)
     _json_cached: bool = PrivateAttr(default=False)
 
+    @field_validator("body", mode="before")
+    @classmethod
+    def _decode_body(cls, value: Any) -> bytes:
+        return _decode_body_from_json(value) or b""
+
+    @field_serializer("body")
+    def _encode_body(self, value: bytes) -> str | dict[str, str] | None:
+        return _encode_body_for_json(value)
+
     @property
     def body_text(self) -> str:
         return self.body.decode("utf-8", errors="replace")
@@ -57,59 +75,7 @@ class HTTPRequest(BaseModel, frozen=True):
         return self.body_json
 
 
-class RawCommunicationInfo(BaseModel):
-    status: int | None = None
-    url: str
-    method: str
-    timing: dict[str, JsonValue] | None = None
-    request_headers: dict[str, JsonValue] = Field(default_factory=dict)
-    response_headers: dict[str, JsonValue] = Field(default_factory=dict)
-    request_body: bytes | None = None
-    response_body: bytes | None = None
-
-    @field_validator("request_body", "response_body", mode="before")
-    @classmethod
-    def _decode_body(cls, v: Any):
-        return _decode_body_from_json(v)
-
-    @field_serializer("request_body", "response_body")
-    def _encode_body(self, v: Any, _):
-        return _encode_body_for_json(v)
-
-
 class HTTPTransaction(BaseModel, frozen=True):
     request: HTTPRequest
     response: HTTPResponse | None = None
     time: float = 0.0
-
-    @classmethod
-    def from_raw(cls, raw: "RawCommunicationInfo") -> "HTTPTransaction":
-        time_value: float = 0.0
-        if raw.timing:
-            for key in ("requestTime", "startTime", "sendStart"):
-                if key in raw.timing:
-                    try:
-                        time_value = float(raw.timing[key])  # type: ignore
-                        break
-                    except (ValueError, TypeError):
-                        pass
-
-        request_bytes = raw.request_body if isinstance(raw.request_body, bytes) else (raw.request_body or b"")
-        response_bytes = raw.response_body if isinstance(raw.response_body, bytes) else (raw.response_body or b"")
-        response = None
-        if raw.status is not None or raw.response_headers or raw.response_body is not None:
-            response = HTTPResponse(
-                status=raw.status,
-                headers=raw.response_headers or {},
-                body=response_bytes,
-            )
-        return cls(
-            request=HTTPRequest(
-                url=raw.url,
-                method=raw.method,
-                headers=raw.request_headers or {},
-                body=request_bytes,
-            ),
-            response=response,
-            time=time_value,
-        )

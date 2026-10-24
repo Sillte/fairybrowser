@@ -1,28 +1,29 @@
-from fairybrowser.devtools.models.http_transaction import RawCommunicationInfo
+from fairybrowser.devtools.models.http_transaction import HTTPRequest, HTTPResponse, HTTPTransaction
 
 
-def test_model_validate_handles_none_base64():
-    data = {"url": "https://example.com", "method": "GET", "request_body": None, "response_body": None}
-
-    instance = RawCommunicationInfo.model_validate(data)
-    assert instance.request_body is None
-    assert instance.response_body is None
-
-
-def test_round_trip_dump_then_validate():
-    original = RawCommunicationInfo(
-        status=200, url="https://example.com", method="POST", request_body=b"hello world", response_body=b'{"ok": true}'
+def test_transaction_body_serialization_round_trips_text_and_binary():
+    original = HTTPTransaction(
+        request=HTTPRequest(
+            url="https://example.com",
+            method="POST",
+            body=b"hello world",
+        ),
+        response=HTTPResponse(status=200, body=b"\x00\xff"),
+        time=1.25,
     )
 
-    dumped = original.model_dump()
-    restored = RawCommunicationInfo.model_validate(dumped)
+    restored = HTTPTransaction.model_validate_json(original.model_dump_json())
 
-    # 完全に復元されるか
-    assert restored.status == original.status
-    assert restored.url == original.url
-    assert restored.method == original.method
-    assert restored.request_body == original.request_body
-    assert restored.response_body == original.response_body
-    assert restored.request_headers == original.request_headers
-    assert restored.response_headers == original.response_headers
-    assert restored.timing == original.timing
+    assert restored == original
+    assert restored.request.body_text == "hello world"
+    assert restored.response is not None
+    assert restored.response.body == b"\x00\xff"
+
+
+def test_empty_transaction_bodies_round_trip():
+    original = HTTPTransaction(request=HTTPRequest(url="https://example.com", method="GET"))
+
+    restored = HTTPTransaction.model_validate_json(original.model_dump_json())
+
+    assert restored == original
+    assert restored.request.body == b""

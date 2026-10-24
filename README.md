@@ -68,7 +68,7 @@ with sync_page(info) as page:
 
 ## Devtools: HTTPTransactionAnalyzer
 
-The `devtools` helpers collect selected CDP network events and store them under a debug folder. By default, HTTP, EventSource, and WebSocket logs are enabled; fetch stream capture and console logging are disabled. Configure `DevtoolsUser` with a `DevtoolsLogPolicy` to change the captured categories. HTTP requests are saved as JSON files; EventSource messages, fetch response chunks, and WebSocket lifecycle/frame events are appended as JSON Lines to `network/event_stream.jsonl`, `network/fetch_stream.jsonl`, and `network/websocket.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `HTTPTransactionAnalyzer` reads the HTTP logs and converts each exchange to an `HTTPTransaction` containing an `HTTPRequest` and an optional `HTTPResponse`.
+The `devtools` helpers collect selected CDP network events and store them under a debug folder. By default, HTTP, EventSource, and WebSocket logs are enabled; fetch stream capture and console logging are disabled. Configure `DevtoolsUser` with a `DevtoolsLogPolicy` to change the captured categories. HTTP transactions are saved as JSON files; EventSource and WebSocket events are appended to separate JSON Lines files per request ID under `network/event_stream/` and `network/websocket/`, with sanitized, hashed filenames. Fetch response chunks are appended to `network/fetch_stream.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `HTTPTransactionAnalyzer` reads the HTTP logs and converts each exchange to an `HTTPTransaction` containing an `HTTPRequest` and an optional `HTTPResponse`.
 
 Typical usage:
 
@@ -101,7 +101,8 @@ for transaction in transactions:
 Notes:
 
 - Use `DevtoolsLogPolicy.from_any(policy_mode="all")` to enable every category, including fetch stream and console capture, then pass it as `DevtoolsUser(page, "./debug", policy=policy)`.
-- Import `NetworkLog` from `fairybrowser.devtools.models.network_log` and call `NetworkLog.load("./debug")` to load the saved files together. It groups HTTP transactions, Server-Sent Events, and WebSocket connections while preserving fetch stream events.
+- Set `save_memory=True` to retain captured network logs in `collector.network_log`; call `.snapshot()` for an immutable tuple-based view. `output_folder` may also be supplied to write logs to disk, and is initialized (cleared) on collector construction.
+- Import `NetworkLog` from `fairybrowser.devtools.models.network_log` and call `NetworkLog.load("./debug")` to load saved files together. It groups HTTP transactions, Server-Sent Events, and WebSocket connections while preserving fetch stream events.
 - HTTP transaction, WebSocket connection, and Server-Sent Events predicates can filter which grouped logs are saved.
 - `HTTPTransactionAnalyzer` accepts the path to the log folder (it will assert the folder exists).
 - It automatically finds JSON files under the folder and under `network/` within the folder.

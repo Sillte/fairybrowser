@@ -1,11 +1,15 @@
+import hashlib
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+import pytest
 from playwright.sync_api import Page
 
 from fairybrowser.devtools.collectors import DevtoolsUser
 from fairybrowser.devtools.models import FetchStreamEvent
+from fairybrowser.devtools.models.http_transaction import HTTPTransaction
 from fairybrowser.devtools.models.policy import DevtoolsLogPolicy
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
 from fairybrowser.devtools.models.websockets import WebSocketEvent
@@ -46,7 +50,70 @@ class FakePage:
         self.evaluated_script = script
 
 
+def test_requires_output_folder_or_memory_storage():
+    with pytest.raises(ValueError, match="output_folder or set save_memory=True"):
+        DevtoolsUser(cast(Page, object()))
+
+
+def test_explicit_output_folder_is_initialized(tmp_path: Path):
+    output_folder = tmp_path / "existing"
+    output_folder.mkdir()
+    (output_folder / "stale.log").write_text("stale", encoding="utf-8")
+
+    collector = DevtoolsUser(cast(Page, object()), output_folder)
+
+    assert collector.output_folder == output_folder
+    assert not (output_folder / "stale.log").exists()
+
+
+def test_memory_only_mode_updates_network_log_and_keeps_snapshots_immutable():
+    collector = DevtoolsUser(cast(Page, object()), save_memory=True)
+    client = FakeCDPClient()
+    collector._start_network(client)
+    client.emit(
+        "Network.requestWillBeSent",
+        {"requestId": "sse-1", "request": {"method": "GET", "url": "https://example.com/events"}},
+    )
+    client.emit(
+        "Network.eventSourceMessageReceived",
+        {"requestId": "sse-1", "timestamp": 1.0, "eventName": "message", "data": "one"},
+    )
+
+    assert collector.network_log is not None
+    first_snapshot = collector.network_log.snapshot()
+    client.emit(
+        "Network.eventSourceMessageReceived",
+        {"requestId": "sse-1", "timestamp": 2.0, "eventName": "message", "data": "two"},
+    )
+    latest_snapshot = collector.network_log.snapshot()
+
+    assert [event.data for event in first_snapshot.server_sent_events[0].events] == ["one"]
+    assert [event.data for event in latest_snapshot.server_sent_events[0].events] == ["one", "two"]
+    assert collector.output_folder is None
+
+
+def test_memory_and_file_storage_can_be_enabled_together(tmp_path: Path):
+    output_folder = tmp_path / "both-modes"
+    collector = DevtoolsUser(cast(Page, object()), output_folder, save_memory=True)
+    client = FakeCDPClient()
+    collector._start_network(client)
+    client.emit(
+        "Network.requestWillBeSent",
+        {"requestId": "http-1", "request": {"method": "GET", "url": "https://example.com"}},
+    )
+    client.emit(
+        "Network.responseReceived",
+        {"requestId": "http-1", "response": {"status": 200, "headers": {}}},
+    )
+    client.emit("Network.loadingFinished", {"requestId": "http-1"})
+
+    assert collector.network_log is not None
+    assert len(collector.network_log.http_transactions) == 1
+    assert (output_folder / "network" / "http-1.json").exists()
+
+
 def test_captures_fetch_stream_chunks(tmp_path: Path):
+
     output_folder = tmp_path / "debug"
     collector = DevtoolsUser(
         cast(Page, FakePage()), output_folder, policy=DevtoolsLogPolicy.from_any(policy_mode="all")
@@ -119,7 +186,7 @@ def test_collects_event_stream_messages(tmp_path: Path):
     client.emit(
         "Network.requestWillBeSent",
         {
-            "requestId": "sse-1",
+            "requestId": "sse/1",
             "request": {
                 "method": "GET",
                 "url": "https://example.com/events",
@@ -129,7 +196,7 @@ def test_collects_event_stream_messages(tmp_path: Path):
     client.emit(
         "Network.eventSourceMessageReceived",
         {
-            "requestId": "sse-1",
+            "requestId": "sse/1",
             "timestamp": 123.5,
             "eventName": "message",
             "eventId": "42",
@@ -137,9 +204,12 @@ def test_collects_event_stream_messages(tmp_path: Path):
         },
     )
 
-    event_path = output_folder / "network" / "event_stream.jsonl"
-    event = ServerSentEvent.model_validate_json(event_path.read_text().strip())
-    assert event.request_id == "sse-1"
+    event_paths = list((output_folder / "network" / "event_stream").glob("*.jsonl"))
+    assert len(event_paths) == 1
+    assert "sse_1" in event_paths[0].stem
+    assert hashlib.sha256(b"sse/1").hexdigest() in event_paths[0].stem
+    event = ServerSentEvent.model_validate_json(event_paths[0].read_text().strip())
+    assert event.request_id == "sse/1"
     assert event.url == "https://example.com/events"
     assert event.data == "hello"
     assert event.event_id == "42"
@@ -173,6 +243,11 @@ def test_http_transaction_policy_filters_saved_logs(tmp_path: Path):
 
     saved_logs = list((output_folder / "network").glob("*.json"))
     assert [path.stem for path in saved_logs] == ["keep"]
+    saved_data = json.loads(saved_logs[0].read_text(encoding="utf-8"))
+    assert "request" in saved_data[0]
+    assert "url" not in saved_data[0]
+    transaction = HTTPTransaction.model_validate(saved_data[0])
+    assert transaction.request.url == "https://example.com/keep"
 
 
 def test_websocket_policy_filters_connections(tmp_path: Path):
@@ -195,8 +270,9 @@ def test_websocket_policy_filters_connections(tmp_path: Path):
     )
     client.emit("Network.webSocketClosed", {"requestId": "ws-1"})
 
-    event_path = output_folder / "network" / "websocket.jsonl"
-    events = [WebSocketEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
+    event_paths = list((output_folder / "network" / "websocket").glob("*.jsonl"))
+    assert len(event_paths) == 1
+    events = [WebSocketEvent.model_validate_json(line) for line in event_paths[0].read_text().splitlines()]
     assert [event.event_type for event in events] == ["created", "frame_received", "closed"]
 
 
@@ -226,8 +302,9 @@ def test_server_sent_events_policy_filters_event_streams(tmp_path: Path):
         {"requestId": "sse-1", "timestamp": 2.0, "eventName": "important", "data": "yes"},
     )
 
-    event_path = output_folder / "network" / "event_stream.jsonl"
-    events = [ServerSentEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
+    event_paths = list((output_folder / "network" / "event_stream").glob("*.jsonl"))
+    assert len(event_paths) == 1
+    events = [ServerSentEvent.model_validate_json(line) for line in event_paths[0].read_text().splitlines()]
     assert [event.data for event in events] == ["no", "yes"]
 
 
@@ -254,8 +331,9 @@ def test_collects_websocket_lifecycle_and_frames(tmp_path: Path):
     )
     client.emit("Network.webSocketClosed", {"requestId": "ws-1"})
 
-    event_path = output_folder / "network" / "websocket.jsonl"
-    events = [WebSocketEvent.model_validate_json(line) for line in event_path.read_text().splitlines()]
+    event_paths = list((output_folder / "network" / "websocket").glob("*.jsonl"))
+    assert len(event_paths) == 1
+    events = [WebSocketEvent.model_validate_json(line) for line in event_paths[0].read_text().splitlines()]
     assert [event.event_type for event in events] == [
         "created",
         "frame_received",
