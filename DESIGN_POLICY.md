@@ -14,6 +14,11 @@
 - Event and transaction models represent captured data; they do not depend on the service that produces them.
 - `NetworkLogSnapshot` is the immutable view for consumers that need a stable snapshot of an in-memory log.
 
+## Mouse Automation
+
+- Mouse recording and playback live in the `fairybrowser.mouse` package; the name describes the functionality rather than the operating system.
+- Mouse automation is currently Windows-only. Treat cross-platform support as a separate design change rather than implying it from the package name.
+
 ## API Evolution
 
 - Preserve observable behavior when reorganizing internals unless a public API decision explicitly changes it.

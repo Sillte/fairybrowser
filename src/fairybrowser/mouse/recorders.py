@@ -5,7 +5,7 @@ from threading import Event
 
 import pynput
 
-from fairybrowser.windows.models import MouseEvent, MouseEventTypeEnum
+from fairybrowser.mouse.models import MouseEvent, MouseEventTypeEnum
 
 
 class MouseRecorder:

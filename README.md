@@ -17,12 +17,15 @@ A small Python project that helps start and connect to Chromium-based browsers v
 
 - `pyproject.toml` — project configuration
 - `src/fairybrowser/` — main package
-	- `runners.py` — start browser processes, connect, and helpers
+	- `runners/` — start browser processes and connect to browsers/pages
+		- `browser.py` — expose the `sync_browser` and `sync_page` context managers
+		- `launcher.py` — launch browsers and wait for their debugging ports
 	- `monitors.py` — save/load execution state and check pid/alive
 	- `storage/` — resolve application storage locations
 	- `port_utils.py` — find/verify available TCP ports
-	- `utils.py` — higher-level helpers (pages, windows)
-	- `process_utils.py` — process / window utilities
+	- `page_finder/` — platform-specific Playwright page selection, injected by `sync_page`
+		- `windows/process_utils.py` — Windows process / window utilities
+	- `mouse/` — mouse recording and playback (currently Windows-only)
 - `tests/` — pytest tests (basic coverage for the utilities)
 - `.vscode/` — recommended VS Code settings, extensions and debug config
 
@@ -31,6 +34,15 @@ Application data is stored under the OS-specific user data directory:
 `$XDG_DATA_HOME` (or `~/.local/share`) on Linux. fairybrowser stores browser
 profiles, execution states, and invocation plugins in separate subdirectories
 under its application data directory.
+
+On Windows, page selection matches visible browser windows. On Linux, it selects
+the first page in browser context/page order, or returns no page when there are
+none. Pass a `PageFinderProtocol` implementation to `sync_page` to override the
+platform-specific default.
+
+Linux supports Chromium with both `webdriver` and `popen` launch modes.
+`webdriver` requires a Chromium installation available to Selenium; `popen`
+uses Playwright's bundled Chromium executable.
 
 ## Quickstart (development)
 
@@ -57,7 +69,7 @@ Note: This project currently includes only a few small unit tests under `tests/`
 
 ## Usage
 
-High-level helper functions live in `src/fairybrowser/runners.py`.
+High-level helper functions are exported from `fairybrowser.runners`.
 
 Example: start a Chromium instance and connect (programmatic)
 

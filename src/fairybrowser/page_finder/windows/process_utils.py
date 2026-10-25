@@ -3,9 +3,6 @@ import ctypes.wintypes
 import time
 
 import psutil
-import win32con
-import win32gui  # type: ignore
-import win32process  # type: ignore
 from pydantic import BaseModel
 
 
@@ -17,28 +14,31 @@ class HwndInfo(BaseModel, frozen=True):
 
 
 def get_visible_windows() -> list[HwndInfo]:
-    """Return the hwnd information of visible window."""
+    """Return the hwnd information of visible windows."""
     user32 = ctypes.windll.user32
-    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-    infos = list()
+    enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    infos = []
 
     def foreach_window(hwnd, _):
         if user32.IsWindowVisible(hwnd):
             length = user32.GetWindowTextLengthW(hwnd)
-            buff = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buff, length + 1)
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
             pid = ctypes.wintypes.DWORD()
             thread_id = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if buff.value:
-                info = HwndInfo(hwnd=hwnd, title=buff.value, pid=pid.value, thread_id=thread_id)
-                infos.append(info)
+            if buffer.value:
+                infos.append(HwndInfo(hwnd=hwnd, title=buffer.value, pid=pid.value, thread_id=thread_id))
         return True
 
-    user32.EnumWindows(EnumWindowsProc(foreach_window), 0)
+    user32.EnumWindows(enum_windows_proc(foreach_window), 0)
     return infos
 
 
 def to_foreground(pid: int, with_maximize: bool = True):
+    import win32con
+    import win32gui  # type: ignore
+    import win32process  # type: ignore
+
     user32 = ctypes.windll.user32
 
     EnumWindows = user32.EnumWindows

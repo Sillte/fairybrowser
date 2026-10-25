@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pyautogui
 
-from fairybrowser.process_utils import to_foreground
-from fairybrowser.windows.editors import to_click_events
-from fairybrowser.windows.models import (
+from fairybrowser.mouse.editors import to_click_events
+from fairybrowser.mouse.models import (
     MouseClickEvent,
     MouseEvent,
     MouseEventTypeEnum,
     MousePlayEventTypeEnum,
 )
+from fairybrowser.page_finder.windows.process_utils import to_foreground
 
 
 class MousePlayer:

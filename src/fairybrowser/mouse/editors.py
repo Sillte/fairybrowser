@@ -1,6 +1,6 @@
 """Edit the `records` so that it can be used for analysis."""
 
-from fairybrowser.windows.models import MouseClickEvent, MouseEvent
+from fairybrowser.mouse.models import MouseClickEvent, MouseEvent
 
 
 def to_click_events(
