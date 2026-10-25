@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from playwright._impl._errors import TargetClosedError
-from playwright.sync_api import BrowserContext, Frame, Page
+from playwright.sync_api import BrowserContext, CDPSession, Frame, Page
 
 from fairybrowser.devtools.event_publisher import EventPublisher
 from fairybrowser.devtools.models.fetch_text_stream_event import (
@@ -220,6 +220,7 @@ class DevtoolsService:
         self._event_publisher = EventPublisher()
         self._network_log = NetworkLog() if save_memory else None
         self._fetch_stream_capture_started = False
+        self._cdp_session: CDPSession | None = None
 
     @property
     def on_http_transaction(self) -> Event[HTTPTransaction]:
@@ -252,6 +253,7 @@ class DevtoolsService:
     def start(self):
         context = self._to_context(self.page)
         client = context.new_cdp_session(self.page)
+        self._cdp_session = client
         self._start_network(client)
         if "console" in self.policy.categories:
             self._start_console(client)
@@ -260,7 +262,13 @@ class DevtoolsService:
         self._event_publisher.start()
 
     def terminate(self) -> None:
-        self._event_publisher.terminate()
+        try:
+            self._event_publisher.terminate()
+        finally:
+            client = self._cdp_session
+            self._cdp_session = None
+            if client is not None:
+                client.detach()
 
     def _start_fetch_stream_capture(self):
         if self._fetch_stream_capture_started:

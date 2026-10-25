@@ -1,4 +1,4 @@
-from types import TracebackType
+from types import TracebackType
 
 
 class InvocationException(Exception):

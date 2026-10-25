@@ -1,4 +1,8 @@
+from contextlib import contextmanager
+from unittest.mock import MagicMock
+
 import pytest
+from playwright.sync_api import Page
 
 from fairybrowser.devtools import (
     FetchTextStreamEvent,
@@ -13,18 +17,160 @@ from fairybrowser.invocation import (
     InvocationConfiguration,
     InvocationContext,
     InvocationCreator,
+    InvocationExecutor,
+    ListenerEventException,
     ServerSentEventListener,
     WebsocketConnectionListener,
 )
 from fairybrowser.models import BrowserInfo
+from fairybrowser.shared.event import Disposable
 
 
 def test_invocation_context_completion_sets_completion_event():
     context = InvocationContext()
 
-    context.completion()
+    context.complete()
 
     assert context.completion_event.is_set()
+
+
+def test_invocation_context_failure_sets_error_and_completion():
+    context = InvocationContext()
+    error = RuntimeError("listener failed")
+
+    context.fail(error)
+
+    assert context.error is error
+    assert context.completion_event.is_set()
+
+
+def test_invocation_context_failure_wraps_listener_event():
+    context = InvocationContext()
+    event = FetchTextStreamEvent(
+        stream_id="fetch-1",
+        event_type="error",
+        url="https://example.com",
+        method="GET",
+        status=500,
+        chunk_index=0,
+        timestamp_ms=1.0,
+        elapsed_ms=0.1,
+        error="stream failed",
+    )
+
+    context.fail(event)
+
+    assert isinstance(context.error, ListenerEventException)
+    assert context.error.event is event
+    assert context.completion_event.is_set()
+
+
+@pytest.mark.parametrize("outcome", ["success", "start", "timeout"])
+def test_invocation_executor_cleans_up(monkeypatch: pytest.MonkeyPatch, outcome: str):
+    page = MagicMock(spec=Page)
+    disposed: list[bool] = []
+    services = []
+
+    class FakeService:
+        def __init__(self, **_kwargs):
+            self.terminated = False
+            services.append(self)
+
+        def start(self):
+            pass
+
+        def terminate(self):
+            self.terminated = True
+
+    @contextmanager
+    def fake_sync_page(**_kwargs):
+        yield page
+
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_page", fake_sync_page)
+    monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
+
+    def start(_input, _page, context):
+        if outcome == "start":
+            raise RuntimeError("start failed")
+        if outcome == "success":
+            context.complete()
+
+    invocation = InvocationCreator.from_any(
+        on_start=start,
+        on_completed=lambda _context: None,
+        listeners=(),
+    )
+    executor = InvocationExecutor.from_any(invocation)
+    monkeypatch.setattr(
+        executor,
+        "_subscribe",
+        lambda *_args: [Disposable(lambda: disposed.append(True))],
+    )
+
+    if outcome == "success":
+        assert executor.invoke(None, configuration=InvocationConfiguration(timeout=0)) is None
+    else:
+        with pytest.raises(RuntimeError if outcome == "start" else TimeoutError):
+            executor.invoke(None, configuration=InvocationConfiguration(timeout=0))
+
+    assert disposed == [True]
+    assert services[0].terminated
+
+
+def test_invocation_executor_propagates_listener_error_and_cleans_up(monkeypatch: pytest.MonkeyPatch):
+    page = MagicMock(spec=Page)
+    disposed: list[bool] = []
+    services = []
+
+    class FakeEvent:
+        def subscribe(self, callback):
+            self.callback = callback
+            return Disposable(lambda: disposed.append(True))
+
+    class FakeService:
+        def __init__(self, **_kwargs):
+            self.on_fetch_stream_event = FakeEvent()
+            self.terminated = False
+            services.append(self)
+
+        def start(self):
+            event = FetchTextStreamEvent(
+                stream_id="fetch-1",
+                event_type="chunk",
+                url="https://example.com",
+                method="GET",
+                status=200,
+                chunk_index=0,
+                timestamp_ms=1.0,
+                elapsed_ms=0.1,
+                text="chunk",
+            )
+            self.on_fetch_stream_event.callback(event)
+
+        def terminate(self):
+            self.terminated = True
+
+    @contextmanager
+    def fake_sync_page(**_kwargs):
+        yield page
+
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_page", fake_sync_page)
+    monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
+
+    def failing_listener(_event):
+        raise RuntimeError("listener failed")
+
+    invocation = InvocationCreator.from_any(
+        on_start=lambda _input, _page: None,
+        on_completed=lambda _context: "unexpected",
+        listeners=FetchTextStreamEventListener.from_any(failing_listener),
+    )
+
+    with pytest.raises(RuntimeError, match="listener failed"):
+        InvocationExecutor.from_any(invocation).invoke(None)
+
+    assert disposed == [True]
+    assert services[0].terminated
 
 
 @pytest.mark.parametrize(
@@ -88,7 +234,7 @@ def test_invocation_configuration_from_any_preserves_configuration():
     assert InvocationConfiguration.from_any(expected) is expected
 
 
-def test_invocation_creator_from_any_resolves_single_fetch_listener():
+def test_invocation_creator_from_any_accepts_single_typed_listener():
     received = []
     event = FetchTextStreamEvent(
         stream_id="fetch-1",
@@ -103,8 +249,8 @@ def test_invocation_creator_from_any_resolves_single_fetch_listener():
     )
     creator = InvocationCreator.from_any(
         on_start=lambda _input, _page: None,
-        on_completion=lambda _context: None,
-        listeners=lambda item: received.append(item),
+        on_completed=lambda _context: None,
+        listeners=FetchTextStreamEventListener.from_any(lambda item: received.append(item)),
     )
 
     assert len(creator.listeners) == 1
@@ -115,15 +261,70 @@ def test_invocation_creator_from_any_resolves_single_fetch_listener():
 
 def test_invocation_creator_from_any_resolves_mixed_listener_sequence():
     http_listener = HTTPTransactionListener.from_any(lambda _transaction: None)
-
-    def fetch_listener(_event):
-        return None
+    fetch_listener = FetchTextStreamEventListener.from_any(lambda _event: None)
 
     creator = InvocationCreator.from_any(
         on_start=lambda _input, _page: None,
-        on_completion=lambda _context: None,
+        on_completed=lambda _context: None,
         listeners=[http_listener, fetch_listener],
     )
 
     assert creator.listeners[0] is http_listener
-    assert isinstance(creator.listeners[1], FetchTextStreamEventListener)
+    assert creator.listeners[1] is fetch_listener
+
+
+def test_invocation_creator_resolves_raw_callables_from_event_annotations():
+    def on_http(event: HTTPTransaction) -> None:
+        pass
+
+    def on_websocket(event: WebsocketConnection, _context: InvocationContext) -> None:
+        pass
+
+    def on_server_sent_event(event: ServerSentEvent) -> None:
+        pass
+
+    def on_fetch_stream(event: FetchTextStreamEvent) -> None:
+        pass
+
+    creator = InvocationCreator.from_any(
+        on_start=lambda _input, _page: None,
+        on_completed=lambda _context: None,
+        listeners=[on_http, on_websocket, on_server_sent_event, on_fetch_stream],
+    )
+
+    assert [type(listener) for listener in creator.listeners] == [
+        HTTPTransactionListener,
+        WebsocketConnectionListener,
+        ServerSentEventListener,
+        FetchTextStreamEventListener,
+    ]
+
+
+@pytest.mark.parametrize(
+    "listeners",
+    [
+        lambda _event: None,
+        [lambda _event: None],
+    ],
+)
+def test_invocation_creator_rejects_untyped_listener_callables(listeners):
+    with pytest.raises(TypeError, match="must be annotated"):
+        InvocationCreator.from_any(
+            on_start=lambda _input, _page: None,
+            on_completed=lambda _context: None,
+            listeners=listeners,
+        )
+
+
+def test_invocation_creator_resolves_forward_referenced_event_annotation():
+    def listener(event) -> None:
+        pass
+
+    listener.__annotations__["event"] = "HTTPTransaction"
+    creator = InvocationCreator.from_any(
+        on_start=lambda _input, _page: None,
+        on_completed=lambda _context: None,
+        listeners=listener,
+    )
+
+    assert isinstance(creator.listeners[0], HTTPTransactionListener)

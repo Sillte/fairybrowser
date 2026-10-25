@@ -125,6 +125,10 @@ However, some tasks require the aggregation of various messages generated during
 
 Invocation is designed to address this need: collecting and processing the resulting messages to produce the desired output.
 
+### Invocation plugins
+
+> **Developers only:** Plugin installation and verification are local development utilities, not features to publicize or expose to unknown users. Plugins execute Python code with the current process's permissions and are not sandboxed; use only plugins you trust.
+
 
 ## License
 

@@ -6,7 +6,7 @@ from threading import Event as ThreadingEvent
 from typing import cast
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import BrowserContext, Page
 
 from fairybrowser.devtools import DevtoolsLogPolicy, DevtoolsService
 from fairybrowser.devtools.models.fetch_text_stream_event import FetchTextStreamEvent
@@ -19,6 +19,7 @@ class FakeCDPClient:
     def __init__(self):
         self.handlers: dict[str, Callable[[dict], None]] = {}
         self.handlers_when_enabled: set[str] = set()
+        self.detach_count = 0
 
     def send(self, method: str, params: dict | None = None):
         self.last_send = (method, params)
@@ -31,6 +32,9 @@ class FakeCDPClient:
 
     def emit(self, event_name: str, params: dict):
         self.handlers[event_name](params)
+
+    def detach(self):
+        self.detach_count += 1
 
 
 class FakePage:
@@ -53,6 +57,30 @@ class FakePage:
 def test_requires_output_folder_or_memory_storage():
     with pytest.raises(ValueError, match="output_folder or set save_memory=True"):
         DevtoolsService(cast(Page, object()))
+
+
+def test_terminate_detaches_cdp_session(monkeypatch: pytest.MonkeyPatch):
+    client = FakeCDPClient()
+
+    class FakeContext:
+        def new_cdp_session(self, _page):
+            return client
+
+    context = cast(BrowserContext, FakeContext())
+    collector = DevtoolsService(
+        cast(Page, object()),
+        policy=DevtoolsLogPolicy.from_any(categories=[]),
+        save_memory=True,
+    )
+    monkeypatch.setattr(collector, "_to_context", lambda _page: context)
+    monkeypatch.setattr(collector, "_start_network", lambda _client: None)
+    monkeypatch.setattr(collector._event_publisher, "start", lambda: None)
+
+    collector.start()
+    collector.terminate()
+    collector.terminate()
+
+    assert client.detach_count == 1
 
 
 def test_explicit_output_folder_is_initialized(tmp_path: Path):

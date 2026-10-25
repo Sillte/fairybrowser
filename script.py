@@ -19,13 +19,13 @@ def collect_api_call(transaction, context):
             }
         )
 
-    context.completion()
+    context.complete()
 
 
 if __name__ == "__main__":
     creator = InvocationCreator.from_any(
         on_start=start,
-        on_completion=lambda context: context.state.get("api_calls", []),
+        on_completed=lambda context: context.state.get("api_calls", []),
         listeners=HTTPTransactionListener.from_any(collect_api_call),
     )
 
