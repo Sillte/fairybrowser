@@ -9,15 +9,16 @@ import pytest
 
 from fairybrowser import monitors
 from fairybrowser.models import BrowserInfo, ExecutionState
+from fairybrowser.storage import StoragePathSolver
 
 
 @pytest.fixture(autouse=True)
 def isolate_execution_states(tmp_path, monkeypatch):
-    monkeypatch.setattr(monitors, "_states_folder", tmp_path / "execution_states")
+    monkeypatch.setattr(monitors, "_storage_path_solver", StoragePathSolver(data_home=tmp_path))
 
 
 def _state_path(name: str, type: str = "chromium"):
-    return monitors._states_folder / type / f"{name}.json"
+    return monitors._storage_path_solver.execution_states_directory() / type / f"{name}.json"
 
 
 def teardown_state(name: str, type: str = "chromium"):
@@ -107,7 +108,7 @@ def test_get_execution_infos_filters():
             infos = monitors.get_execution_infos()
         alive_names = {info.name for info in infos}
         assert alive_name in alive_names
-        assert dead_name not in alive_name
+        assert dead_name not in alive_names
     finally:
         s.close()
         teardown_state(alive_name)

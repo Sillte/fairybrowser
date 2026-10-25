@@ -6,12 +6,13 @@ import psutil
 
 from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
 from fairybrowser.port_utils import is_port_free
+from fairybrowser.storage import StoragePathSolver
 
-_states_folder = Path.home() / ".config" / "fairybrowser" / "EXECUTION_STATES"
+_storage_path_solver = StoragePathSolver()
 
 
 def _to_type_folder(type: BrowserType) -> Path:
-    return _states_folder / type
+    return _storage_path_solver.execution_states_directory() / type
 
 
 def _to_json_path(name: str, type: BrowserType) -> Path:
@@ -55,7 +56,7 @@ def is_existent(info: BrowserInfo) -> bool:
 
 def get_execution_infos() -> dict[BrowserInfo, ExecutionState]:
     result = {}
-    for path in _states_folder.glob("*/*.json"):
+    for path in _storage_path_solver.execution_states_directory().glob("*/*.json"):
         type = path.parent.stem
         name = path.stem
         if not (type == "chromium" or type == "edge"):

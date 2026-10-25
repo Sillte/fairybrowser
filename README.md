@@ -19,11 +19,18 @@ A small Python project that helps start and connect to Chromium-based browsers v
 - `src/fairybrowser/` — main package
 	- `runners.py` — start browser processes, connect, and helpers
 	- `monitors.py` — save/load execution state and check pid/alive
+	- `storage/` — resolve application storage locations
 	- `port_utils.py` — find/verify available TCP ports
 	- `utils.py` — higher-level helpers (pages, windows)
 	- `process_utils.py` — process / window utilities
 - `tests/` — pytest tests (basic coverage for the utilities)
 - `.vscode/` — recommended VS Code settings, extensions and debug config
+
+Application data is stored under the OS-specific user data directory:
+`%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, and
+`$XDG_DATA_HOME` (or `~/.local/share`) on Linux. fairybrowser stores browser
+profiles, execution states, and invocation plugins in separate subdirectories
+under its application data directory.
 
 ## Quickstart (development)
 

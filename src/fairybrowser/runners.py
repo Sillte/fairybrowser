@@ -17,7 +17,10 @@ from fairybrowser.monitors import (
     to_browser_info,
 )
 from fairybrowser.port_utils import can_connect_port, find_available_port
+from fairybrowser.storage import StoragePathSolver
 from fairybrowser.utils import get_page
+
+_storage_path_solver = StoragePathSolver()
 
 
 def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0):
@@ -142,7 +145,7 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
         "--no-default-browser-check",
         "--disable-infobars",
     ]
-    user_dir = Path.home() / f".config/fairybrowser/{info.type}_{info.spawn}/{info.name}"
+    user_dir = _storage_path_solver.browser_profile_directory(info.type, info.spawn, info.name)
     options = [
         f"--user-data-dir={user_dir}",
         *default_options,

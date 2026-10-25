@@ -1,5 +1,4 @@
 import os
-import platform
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -7,14 +6,7 @@ from typing import Any
 from fairybrowser.invocation.models import InvocationConfiguration, InvocationExecutor, InvocationProtocol
 from fairybrowser.invocation.plugin.exceptions import InvocationPluginError
 from fairybrowser.invocation.plugin.loader import InvocationPluginLoader
-
-
-def _default_plugin_directory() -> Path:
-    if platform.system() == "Windows":
-        config_home = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
-    else:
-        config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return config_home / "fairybrowser" / "invocations"
+from fairybrowser.storage import StoragePathSolver
 
 
 class InvocationPluginRegistry:
@@ -22,7 +14,9 @@ class InvocationPluginRegistry:
 
     def __init__(self, plugin_directory: Path | None = None) -> None:
         self.plugin_directory = (
-            Path(plugin_directory).expanduser() if plugin_directory is not None else _default_plugin_directory()
+            Path(plugin_directory).expanduser()
+            if plugin_directory is not None
+            else StoragePathSolver().invocation_plugins_directory()
         )
         self._loader = InvocationPluginLoader(self.plugin_directory)
 
