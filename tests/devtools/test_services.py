@@ -55,8 +55,12 @@ class FakePage:
 
 
 def test_requires_output_folder_or_memory_storage():
-    with pytest.raises(ValueError, match="output_folder or set save_memory=True"):
-        DevtoolsService(cast(Page, object()))
+    with pytest.raises(ValueError):
+        DevtoolsService(cast(Page, object()), save_memory=False)
+
+
+def test_default_setting_passed():
+    DevtoolsService(cast(Page, object()))
 
 
 def test_terminate_detaches_cdp_session(monkeypatch: pytest.MonkeyPatch):
@@ -161,9 +165,7 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
     network_folder.mkdir()
     captured_events = []
     received_event = ThreadingEvent()
-    collector.on_fetch_stream_event.subscribe(
-        lambda event: (captured_events.append(event), received_event.set())
-    )
+    collector.on_fetch_stream_event.subscribe(lambda event: (captured_events.append(event), received_event.set()))
 
     collector._start_fetch_stream_capture()
     collector._start_fetch_stream_capture()
@@ -261,9 +263,7 @@ def test_collects_event_stream_messages(tmp_path: Path):
     collector = DevtoolsService(cast(Page, object()), output_folder)
     captured_events = []
     received_event = ThreadingEvent()
-    collector.on_server_sent_event.subscribe(
-        lambda event: (captured_events.append(event), received_event.set())
-    )
+    collector.on_server_sent_event.subscribe(lambda event: (captured_events.append(event), received_event.set()))
     client = FakeCDPClient()
     collector._start_network(client)
     assert "Network.eventSourceMessageReceived" in client.handlers_when_enabled

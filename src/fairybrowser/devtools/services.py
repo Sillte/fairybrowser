@@ -206,7 +206,7 @@ class DevtoolsService:
         page: Page | Frame,
         output_folder: str | Path | None = None,
         policy: DevtoolsLogPolicy | None = None,
-        save_memory: bool = False,
+        save_memory: bool = True,
     ):
         if output_folder is None and not save_memory:
             raise ValueError("Provide output_folder or set save_memory=True")
