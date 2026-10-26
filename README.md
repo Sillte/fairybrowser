@@ -11,7 +11,6 @@ A small Python project that helps start and connect to Chromium-based browsers v
 - Find an available local port (with preferred candidates or a range).
 - Save and load running browser execution state (name + pid) and check if the process is still alive.
 - Helpers to obtain a Playwright `Browser` object connected over CDP.
-- Example prompt files under `prompts/` and `.github/prompts/` for repository-scoped assistant usage.
 
 ## Repository layout (important files)
 
@@ -86,7 +85,7 @@ with sync_page(info) as page:
 
 ## Devtools
 
-The `devtools` helpers collect selected CDP network events and store them under a debug folder. By default, HTTP, EventSource, and Websocket logs are enabled; fetch stream capture and console logging are disabled. Configure `DevtoolsService` with a `DevtoolsLogPolicy` to change the captured categories. Target selection defaults to the page; pass `target_types=("page", "service_worker")` to collect the enabled CDP categories from both page and Service Worker targets. When using a Browser not obtained through `fairybrowser.runners`, also pass its HTTP or WebSocket debugging endpoint as `browser_cdp_endpoint`. Fetch stream capture is page-only because it instruments the page's `fetch` function. HTTP transactions are saved as JSON files; EventSource and Websocket events are appended to separate JSON Lines files per request ID under `network/event_stream/` and `network/websocket/`, with sanitized, hashed filenames. Fetch response chunks are appended to `network/fetch_stream.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `NetworkLog.load()` loads the saved exchanges and events as typed models.
+The `devtools` helpers collect selected CDP network events and store them under a debug folder. By default, HTTP, EventSource, and Websocket logs are enabled; fetch stream capture and console logging are disabled. Configure `DevtoolsService` with a `DevtoolsLogPolicy` to change the captured categories. Target selection defaults to the page; pass `target_types=("page", "service_worker")` to collect the enabled CDP categories from both page and Service Worker targets. When using a Browser not obtained through `fairybrowser.runners`, also pass its HTTP or WebSocket debugging endpoint as `browser_cdp_endpoint`. Pass a `logging.Logger` as `logger` to route service and CDP diagnostics to a custom logger; if omitted, a package logger is used. Fetch stream capture is page-only because it instruments the page's `fetch` function. HTTP transactions are saved as JSON files; EventSource and Websocket events are appended to separate JSON Lines files per request ID under `network/event_stream/` and `network/websocket/`, with sanitized, hashed filenames. Fetch response chunks are appended to `network/fetch_stream.jsonl`. Fetch capture observes textual and JSON-like responses by cloning the response body, leaving the page's response available to the application. `NetworkLog.load()` loads the saved exchanges and events as typed models.
 
 `DevtoolsService` also exposes typed events for live notifications. Subscribe before starting the service, and terminate it when finished. Use `fetch_stream_event_predicates` to filter Fetch events; multiple predicates use any-match semantics:
 

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from threading import Event as ThreadingEvent
@@ -10,11 +11,11 @@ import pytest
 from playwright.sync_api import BrowserContext, Page
 
 from fairybrowser.devtools import DevtoolsLogPolicy, DevtoolsService
+from fairybrowser.devtools.infra.cdp.connection import _CDPCommandError, _CDPCommandResponse, _FlatCDPConnection
 from fairybrowser.devtools.models.fetch_text_stream_event import FetchTextStreamEvent
 from fairybrowser.devtools.models.http_transaction import HTTPTransaction
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent
 from fairybrowser.devtools.models.websockets import WebsocketEvent
-from fairybrowser.devtools.services import _CDPCommandError, _CDPCommandResponse, _FlatCDPConnection
 
 
 class FakeCDPClient:
@@ -148,6 +149,14 @@ def test_default_setting_passed():
     DevtoolsService(cast(Page, object()))
 
 
+def test_custom_logger_is_passed_to_network_capturer():
+    logger = logging.getLogger("test.devtools")
+    service = DevtoolsService(cast(Page, object()), logger=logger)
+
+    assert service._logger is logger
+    assert service._network_event_capturer._logger is logger
+
+
 def test_terminate_detaches_cdp_session(monkeypatch: pytest.MonkeyPatch):
     client = FakeCDPClient()
 
@@ -177,7 +186,13 @@ def test_selected_targets_capture_enabled_categories(
 ):
     page_client = FakeCDPClient()
     flat_client = FakeFlatCDPConnection()
-    monkeypatch.setattr("fairybrowser.devtools.services._FlatCDPConnection", lambda _url: flat_client)
+    received_loggers = []
+
+    def create_flat_connection(_url, logger=None):
+        received_loggers.append(logger)
+        return flat_client
+
+    monkeypatch.setattr("fairybrowser.devtools.services._FlatCDPConnection", create_flat_connection)
 
     class FakeContext:
         browser = None
@@ -197,6 +212,7 @@ def test_selected_targets_capture_enabled_categories(
 
     collector.start()
     try:
+        assert received_loggers == [collector._logger]
         auto_attach = next(
             params for _, method, params, _ in flat_client.commands if method == "Target.autoAttachRelated"
         )
@@ -280,7 +296,7 @@ def test_selected_targets_capture_enabled_categories(
 def test_failed_service_worker_setup_resumes_and_detaches_session(monkeypatch: pytest.MonkeyPatch):
     page_client = FakeCDPClient()
     flat_client = FakeFlatCDPConnection()
-    monkeypatch.setattr("fairybrowser.devtools.services._FlatCDPConnection", lambda _url: flat_client)
+    monkeypatch.setattr("fairybrowser.devtools.services._FlatCDPConnection", lambda _url, _logger=None: flat_client)
 
     class FakeContext:
         browser = None
@@ -333,7 +349,7 @@ def test_service_worker_target_discovery_falls_back_without_auto_attach(monkeypa
     )
     flat_client.supports_auto_attach = False
     page_client = FakeCDPClient()
-    monkeypatch.setattr("fairybrowser.devtools.services._FlatCDPConnection", lambda _url: flat_client)
+    monkeypatch.setattr("fairybrowser.devtools.services._FlatCDPConnection", lambda _url, _logger=None: flat_client)
 
     class FakeContext:
         browser = None
@@ -486,8 +502,9 @@ def test_captures_fetch_stream_chunks(tmp_path: Path):
 
 def test_fetch_stream_event_predicate_filters_capture(tmp_path: Path):
     output_folder = tmp_path / "filtered-fetch-stream"
+    page = FakePage()
     collector = DevtoolsService(
-        cast(Page, FakePage()),
+        cast(Page, page),
         output_folder,
         policy=DevtoolsLogPolicy.from_any(
             categories=["fetch_stream"],
@@ -496,7 +513,9 @@ def test_fetch_stream_event_predicate_filters_capture(tmp_path: Path):
         save_memory=True,
     )
     (output_folder / "network").mkdir()
-    collector._on_fetch_stream_event(
+    collector._start_fetch_stream_capture()
+    assert page.binding is not None
+    page.binding(
         {},
         {
             "stream_id": "fetch-1",
@@ -517,9 +536,12 @@ def test_fetch_stream_event_predicate_filters_capture(tmp_path: Path):
 
 def test_default_policy_skips_fetch_stream_capture(tmp_path: Path):
     output_folder = tmp_path / "default-policy"
-    collector = DevtoolsService(cast(Page, FakePage()), output_folder)
+    page = FakePage()
+    collector = DevtoolsService(cast(Page, page), output_folder)
     collector._start_network(FakeCDPClient())
-    collector._on_fetch_stream_event(
+    collector._start_fetch_stream_capture()
+    assert page.binding is not None
+    page.binding(
         {},
         {
             "stream_id": "fetch-1",
