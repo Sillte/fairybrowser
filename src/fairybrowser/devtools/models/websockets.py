@@ -4,9 +4,13 @@ from pydantic import BaseModel, Field, JsonValue
 
 
 class WebsocketFrame(BaseModel, frozen=True):
-    opcode: int
-    mask: bool
-    payload_data: str
+    """
+    This represents an entire WebSocket message.
+    """
+
+    opcode: int  # WebSocket message opcode.
+    mask: bool  # encrypted or not
+    payload_data: str  # string (opcode=1) or base64 encoded string representation.
 
 
 class WebsocketEvent(BaseModel, frozen=True):

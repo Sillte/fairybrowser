@@ -64,4 +64,6 @@ def sync_page(
 def _fetch_browser(playwright: Playwright, port: int, type: BrowserType) -> Browser:
     assert type in {"chromium", "edge"}
     address = f"http://localhost:{port}"
-    return playwright.chromium.connect_over_cdp(address)
+    browser = playwright.chromium.connect_over_cdp(address)
+    setattr(browser, "_fairybrowser_cdp_endpoint", address)
+    return browser

@@ -4,7 +4,7 @@ from fairybrowser.devtools.models.network_log import NetworkLog, NetworkLogSnaps
 from fairybrowser.devtools.models.policy import DevtoolsLogPolicy, LogCategory, PolicyMode
 from fairybrowser.devtools.models.server_sent_events import ServerSentEvent, ServerSentEvents
 from fairybrowser.devtools.models.websockets import WebsocketConnection, WebsocketEvent, WebsocketFrame
-from fairybrowser.devtools.services import DevtoolsService
+from fairybrowser.devtools.services import DevtoolsService, DevtoolsTargetType
 
 __all__ = [
     "DevtoolsLogPolicy",
@@ -22,4 +22,5 @@ __all__ = [
     "WebsocketConnection",
     "WebsocketEvent",
     "WebsocketFrame",
+    "DevtoolsTargetType",
 ]
