@@ -1,4 +1,7 @@
+import time
 from contextlib import contextmanager
+from dataclasses import FrozenInstanceError
+from threading import get_ident
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +23,8 @@ from fairybrowser.invocation import (
     InvocationExecutor,
     ListenerEventException,
     ServerSentEventListener,
+    TimerEvent,
+    TimerEventListener,
     WebsocketConnectionListener,
 )
 from fairybrowser.models import BrowserInfo
@@ -32,6 +37,17 @@ def test_invocation_context_completion_sets_completion_event():
     context.complete()
 
     assert context.completion_event.is_set()
+
+
+def test_invocation_context_timer_event_keeps_context_frozen():
+    context = InvocationContext()
+    event = TimerEvent(tick_count=1, scheduled_at=1.0, fired_at=1.1)
+
+    context._set_timer_event(event)
+
+    assert context.timer_event is event
+    with pytest.raises(FrozenInstanceError):
+        setattr(context, "timer_event", None)
 
 
 def test_invocation_context_failure_sets_error_and_completion():
@@ -171,6 +187,53 @@ def test_invocation_executor_propagates_listener_error_and_cleans_up(monkeypatch
 
     assert disposed == [True]
     assert services[0].terminated
+
+
+def test_timer_listener_runs_on_page_thread_and_updates_context(monkeypatch: pytest.MonkeyPatch):
+    page = MagicMock(spec=Page)
+    page.wait_for_timeout.side_effect = lambda milliseconds: time.sleep(milliseconds / 1000)
+    thread_id = get_ident()
+
+    class FakeService:
+        def __init__(self, **_kwargs):
+            self.terminated = False
+
+        def start(self):
+            pass
+
+        def terminate(self):
+            self.terminated = True
+
+    @contextmanager
+    def fake_sync_page(**_kwargs):
+        yield page
+
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_page", fake_sync_page)
+    monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
+    received = []
+
+    def on_timer(callback_page: Page, context: InvocationContext) -> None:
+        received.append((callback_page, context.timer_event, get_ident()))
+        context.complete()
+
+    invocation = InvocationCreator.from_any(
+        on_start=lambda _input, _page: None,
+        on_completed=lambda context: context.timer_event,
+        listeners=[TimerEventListener(interval=0.01, listener=on_timer)],
+    )
+
+    result = InvocationExecutor.from_any(invocation).invoke(None, configuration=InvocationConfiguration(timeout=1))
+
+    assert isinstance(result, TimerEvent)
+    assert result.tick_count == 1
+    assert result.scheduled_at <= result.fired_at
+    assert received == [(page, result, thread_id)]
+
+
+@pytest.mark.parametrize("interval", [0, -1, float("inf"), float("nan")])
+def test_timer_listener_rejects_invalid_intervals(interval: float):
+    with pytest.raises(ValueError, match="finite positive"):
+        TimerEventListener(interval=interval, listener=lambda _page, _context: None)
 
 
 @pytest.mark.parametrize(

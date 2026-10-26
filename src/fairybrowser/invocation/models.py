@@ -1,3 +1,4 @@
+import math
 import time
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
@@ -45,6 +46,18 @@ class ListenerEventException(Exception):
 
 
 @dataclass(frozen=True)
+class TimerEvent:
+    tick_count: int
+    scheduled_at: float
+    fired_at: float
+
+
+@dataclass
+class _TimerEventSlot:
+    value: TimerEvent | None = None
+
+
+@dataclass(frozen=True)
 class InvocationContext[T]:
     """Invocation state and the signal used to indicate completion."""
 
@@ -52,6 +65,16 @@ class InvocationContext[T]:
     completion_event: Event = field(default_factory=Event)
     _errors: list[BaseException] = field(default_factory=list, repr=False)
     _error_lock: Lock = field(default_factory=Lock, repr=False)
+    _timer_event_slot: _TimerEventSlot = field(
+        default_factory=_TimerEventSlot, init=False, repr=False, compare=False
+    )
+
+    @property
+    def timer_event(self) -> TimerEvent | None:
+        return self._timer_event_slot.value
+
+    def _set_timer_event(self, event: TimerEvent) -> None:
+        self._timer_event_slot.value = event
 
     def complete(self) -> None:
         self.completion_event.set()
@@ -153,9 +176,21 @@ class FetchTextStreamEventListener:
         return cls(listener=_resolve_listener_callable(listener))
 
 
-type InvocationListener = (
+@dataclass(frozen=True)
+class TimerEventListener:
+    interval: float
+    listener: Callable[[Page, InvocationContext], None]
+    kind: Literal["timer"] = "timer"
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.interval) or self.interval <= 0:
+            raise ValueError("Timer interval must be a finite positive number")
+
+
+type DevtoolsListener = (
     HTTPTransactionListener | WebsocketConnectionListener | ServerSentEventListener | FetchTextStreamEventListener
 )
+type InvocationListener = DevtoolsListener | TimerEventListener
 type InvocationListenerLike = InvocationListener | Callable[..., object]
 type InvocationListeners = InvocationListenerLike | Sequence[InvocationListenerLike]
 
@@ -188,7 +223,21 @@ def _resolve_listener(listener: Callable[..., object]) -> InvocationListener:
         "ServerSentEvent, or FetchTextStreamEvent"
     )
 
-_LISTENER_TYPE_TO_CATEGORIES: Final[Mapping[type[InvocationListener], LogCategory]] = {
+
+def _split_listeners(
+    listeners: Sequence[InvocationListener],
+) -> tuple[Sequence[DevtoolsListener], Sequence[TimerEventListener]]:
+    devtools_listeners: list[DevtoolsListener] = []
+    timer_listeners: list[TimerEventListener] = []
+    for listener in listeners:
+        if isinstance(listener, TimerEventListener):
+            timer_listeners.append(listener)
+        else:
+            devtools_listeners.append(listener)
+    return tuple(devtools_listeners), tuple(timer_listeners)
+
+
+_LISTENER_TYPE_TO_CATEGORIES: Final[Mapping[type[DevtoolsListener], LogCategory]] = {
     HTTPTransactionListener: "http",
     WebsocketConnectionListener: "websocket",
     ServerSentEventListener: "event_source",
@@ -196,7 +245,7 @@ _LISTENER_TYPE_TO_CATEGORIES: Final[Mapping[type[InvocationListener], LogCategor
 }
 
 
-def _get_required_categories(listeners: Sequence[InvocationListener]) -> Sequence[LogCategory]:
+def _get_required_categories(listeners: Sequence[DevtoolsListener]) -> Sequence[LogCategory]:
     return tuple({_LISTENER_TYPE_TO_CATEGORIES[type(listener)] for listener in listeners})
 
 
@@ -291,6 +340,7 @@ class InvocationCreator[S, T]:
             WebsocketConnectionListener,
             ServerSentEventListener,
             FetchTextStreamEventListener,
+            TimerEventListener,
         )
         if isinstance(listeners, listener_types):
             return (listeners,)
@@ -312,20 +362,57 @@ class InvocationCreator[S, T]:
 
 
 class _CompletionWaiter:
-    def __init__(self, context: InvocationContext, timeout: float | None):
+    def __init__(
+        self,
+        context: InvocationContext,
+        timeout: float | None,
+        timer_listeners: Sequence[TimerEventListener] = (),
+    ):
         self._context = context
         self._timeout = timeout
+        self._timer_listeners = timer_listeners
 
     def wait(self, page: Page) -> None:
-        deadline = time.monotonic() + self._timeout if (self._timeout is not None) else None
+        started_at = time.monotonic()
+        deadline = started_at + self._timeout if self._timeout is not None else None
+        timers = [
+            (listener, started_at + listener.interval, 0)
+            for listener in self._timer_listeners
+        ]
         while not self._context.completion_event.is_set():
+            now = time.monotonic()
+            if deadline is not None and deadline - now <= 0:
+                raise TimeoutError(f"Timeout occurs for waiting the set of `completion_event`, {self._timeout=}")
+
+            due_timers = [index for index, (_, scheduled_at, _) in enumerate(timers) if scheduled_at <= now]
+            if due_timers:
+                for index in due_timers:
+                    listener, scheduled_at, tick_count = timers[index]
+                    fired_at = time.monotonic()
+                    self._context._set_timer_event(
+                        TimerEvent(
+                            tick_count=tick_count + 1,
+                            scheduled_at=scheduled_at,
+                            fired_at=fired_at,
+                        )
+                    )
+                    try:
+                        listener.listener(page, self._context)
+                    except Exception as error:
+                        self._context.fail(error)
+                    timers[index] = (listener, time.monotonic() + listener.interval, tick_count + 1)
+                    if self._context.completion_event.is_set():
+                        break
+                continue
+
+            wait_seconds = 0.1
             if deadline is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(f"Timeout occurs for waiting the set of `completion_event`, {self._timeout=}")
-                page.wait_for_timeout(min(100, max(1, int(remaining * 1000))))
-            else:
-                page.wait_for_timeout(100)
+                wait_seconds = min(wait_seconds, deadline - now)
+            if timers:
+                next_timer = min(scheduled_at for _, scheduled_at, _ in timers)
+                wait_seconds = min(wait_seconds, max(0, next_timer - now))
+            page.wait_for_timeout(max(1, int(wait_seconds * 1000)))
+
         error = self._context.error
         if error is not None:
             raise error
@@ -344,16 +431,16 @@ class InvocationExecutor[S, T]:
     ) -> T:
         configuration = configuration or InvocationConfiguration.from_any()
         context = InvocationContext()
-        listeners = self._invocation_creator.listeners
-        policy = DevtoolsLogPolicy.from_any(categories=_get_required_categories(listeners))
+        devtools_listeners, timer_listeners = _split_listeners(self._invocation_creator.listeners)
+        policy = DevtoolsLogPolicy.from_any(categories=_get_required_categories(devtools_listeners))
 
         with sync_page(browser_info=configuration.browser_info) as page:
             devtools_service = DevtoolsService(page=page, policy=policy, save_memory=True, output_folder=output_folder)
-            subscriptions = self._subscribe(devtools_service, context, listeners)
+            subscriptions = self._subscribe(devtools_service, context, devtools_listeners)
             try:
                 devtools_service.start()
                 self._invocation_creator.start(input=input, page=page, context=context)
-                _CompletionWaiter(context, configuration.timeout).wait(page)
+                _CompletionWaiter(context, configuration.timeout, timer_listeners).wait(page)
 
                 return self._invocation_creator.on_completed(page, context)
             finally:
@@ -364,12 +451,12 @@ class InvocationExecutor[S, T]:
                     devtools_service.terminate()
 
     def _subscribe(
-        self, service: DevtoolsService, context: InvocationContext, listeners: Sequence[InvocationListener]
+        self, service: DevtoolsService, context: InvocationContext, listeners: Sequence[DevtoolsListener]
     ) -> Sequence[Disposable]:
         return [self._subscribe_listener(service, listener, context) for listener in listeners]
 
     def _subscribe_listener(
-        self, service: DevtoolsService, listener: InvocationListener, context: InvocationContext
+        self, service: DevtoolsService, listener: DevtoolsListener, context: InvocationContext
     ) -> Disposable:
         def notify(event: Any) -> None:
             try:

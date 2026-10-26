@@ -12,6 +12,8 @@ from fairybrowser.invocation.models import (
     ListenerEventException,
     ListenerEventType,
     ServerSentEventListener,
+    TimerEvent,
+    TimerEventListener,
     WebsocketConnectionListener,
 )
 
@@ -28,5 +30,7 @@ __all__ = [
     "ListenerEventType",
     "Page",
     "ServerSentEventListener",
+    "TimerEvent",
+    "TimerEventListener",
     "WebsocketConnectionListener",
 ]
