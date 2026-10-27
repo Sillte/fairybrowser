@@ -75,7 +75,10 @@ class FakeFlatCDPConnection:
         command_id = self.next_command_id
         self.commands.append((command_id, method, params, session_id))
         if method == "Target.attachToTarget":
-            callback(_CDPCommandResponse(result={"sessionId": f"session-{params['targetId']}"}))
+            assert params is not None
+            target_id = params.get("targetId")
+            assert isinstance(target_id, str)
+            callback(_CDPCommandResponse(result={"sessionId": f"session-{target_id}"}))
         elif method == "Network.getResponseBody":
             self.pending[command_id] = (session_id, callback)
         else:
@@ -734,7 +737,9 @@ def test_collects_websocket_lifecycle_and_frames(tmp_path: Path):
         "closed",
     ]
     assert events[1].frame is None
-    assert events[1].params["response"]["status"] == 101
+    response = events[1].params.get("response")
+    assert isinstance(response, dict)
+    assert response.get("status") == 101
     assert events[2].url == "wss://example.com/chat"
     assert events[2].frame is not None
     assert events[2].frame.payload_data == "hello"

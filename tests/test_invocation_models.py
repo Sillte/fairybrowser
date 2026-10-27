@@ -1,7 +1,7 @@
 import time
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
-from threading import get_ident
+from threading import Event, Thread, get_ident
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,6 +37,39 @@ def test_invocation_context_completion_sets_completion_event():
     context.complete()
 
     assert context.completion_event.is_set()
+
+
+def test_invocation_context_keeps_the_last_completed_listener_result():
+    context = InvocationContext()
+
+    assert context.listener_result is None
+
+    assert context._begin_listener()
+    context._finish_listener("first")
+    assert context._begin_listener()
+    context._finish_listener(None)
+
+    assert context.listener_result is None
+
+
+def test_invocation_context_waits_for_active_listeners_to_return():
+    context = InvocationContext()
+    assert context._begin_listener()
+    finished = Event()
+    waiter = Thread(target=lambda: (context._finish_listeners(), finished.set()))
+    waiter.start()
+
+    with context._listener_condition:
+        while not context._listener_state.closed:
+            context._listener_condition.wait()
+
+    assert not finished.is_set()
+    context._finish_listener("listener result")
+    waiter.join(timeout=1)
+
+    assert not waiter.is_alive()
+    assert finished.is_set()
+    assert context.listener_result == "listener result"
 
 
 def test_invocation_context_timer_event_keeps_context_frozen():
@@ -113,7 +146,6 @@ def test_invocation_executor_cleans_up(monkeypatch: pytest.MonkeyPatch, outcome:
 
     invocation = InvocationCreator.from_any(
         on_start=start,
-        on_completed=lambda _context: None,
         listeners=(),
     )
     executor = InvocationExecutor.from_any(invocation)
@@ -212,22 +244,23 @@ def test_timer_listener_runs_on_page_thread_and_updates_context(monkeypatch: pyt
     monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
     received = []
 
-    def on_timer(callback_page: Page, context: InvocationContext) -> None:
+    def on_timer(callback_page: Page, context: InvocationContext) -> str:
         received.append((callback_page, context.timer_event, get_ident()))
         context.complete()
+        return "timer result"
 
     invocation = InvocationCreator.from_any(
         on_start=lambda _input, _page: None,
-        on_completed=lambda context: context.timer_event,
         listeners=[TimerEventListener(interval=0.01, listener=on_timer)],
     )
 
     result = InvocationExecutor.from_any(invocation).invoke(None, configuration=InvocationConfiguration(timeout=1))
 
-    assert isinstance(result, TimerEvent)
-    assert result.tick_count == 1
-    assert result.scheduled_at <= result.fired_at
-    assert received == [(page, result, thread_id)]
+    assert result == "timer result"
+    assert received[0][0] is page
+    assert received[0][1].tick_count == 1
+    assert received[0][1].scheduled_at <= received[0][1].fired_at
+    assert received[0][2] == thread_id
 
 
 @pytest.mark.parametrize("interval", [0, -1, float("inf"), float("nan")])

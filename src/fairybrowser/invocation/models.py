@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
 from pathlib import Path
-from threading import Event, Lock
+from threading import Condition, Event, Lock
 from typing import (
     Any,
     Callable,
@@ -57,6 +57,16 @@ class _TimerEventSlot:
     value: TimerEvent | None = None
 
 
+@dataclass
+class _ListenerState:
+    result: Any = None
+    active_count: int = 0
+    closed: bool = False
+
+
+_NO_LISTENER_RESULT = object()
+
+
 @dataclass(frozen=True)
 class InvocationContext[T]:
     """Invocation state and the signal used to indicate completion."""
@@ -65,9 +75,9 @@ class InvocationContext[T]:
     completion_event: Event = field(default_factory=Event)
     _errors: list[BaseException] = field(default_factory=list, repr=False)
     _error_lock: Lock = field(default_factory=Lock, repr=False)
-    _timer_event_slot: _TimerEventSlot = field(
-        default_factory=_TimerEventSlot, init=False, repr=False, compare=False
-    )
+    _timer_event_slot: _TimerEventSlot = field(default_factory=_TimerEventSlot, init=False, repr=False, compare=False)
+    _listener_condition: Condition = field(default_factory=Condition, init=False, repr=False, compare=False)
+    _listener_state: _ListenerState = field(default_factory=_ListenerState, init=False, repr=False, compare=False)
 
     @property
     def timer_event(self) -> TimerEvent | None:
@@ -75,6 +85,34 @@ class InvocationContext[T]:
 
     def _set_timer_event(self, event: TimerEvent) -> None:
         self._timer_event_slot.value = event
+
+    @property
+    def listener_result(self) -> Any:
+        """Return the result of the last listener that completed."""
+        with self._listener_condition:
+            return self._listener_state.result
+
+    def _begin_listener(self) -> bool:
+        with self._listener_condition:
+            if self._listener_state.closed:
+                return False
+            self._listener_state.active_count += 1
+            return True
+
+    def _finish_listener(self, result: Any = _NO_LISTENER_RESULT) -> None:
+        with self._listener_condition:
+            if result is not _NO_LISTENER_RESULT:
+                self._listener_state.result = result
+            self._listener_state.active_count -= 1
+            if self._listener_state.active_count == 0:
+                self._listener_condition.notify_all()
+
+    def _finish_listeners(self) -> None:
+        with self._listener_condition:
+            self._listener_state.closed = True
+            self._listener_condition.notify_all()
+            while self._listener_state.active_count:
+                self._listener_condition.wait()
 
     def complete(self) -> None:
         self.completion_event.set()
@@ -118,27 +156,29 @@ class InvocationConfiguration:
 
 
 def _resolve_listener_callable[T](
-    listener: Callable[[T], None] | Callable[[T, InvocationContext], None],
-) -> Callable[[T, InvocationContext], None]:
+    listener: Callable[[T], Any] | Callable[[T, InvocationContext], Any],
+) -> Callable[[T, InvocationContext], Any]:
     listener_signature = signature(listener)
 
     try:
         listener_signature.bind(None, None)
     except TypeError:
         listener_signature.bind(None)
-        one_argument = cast(Callable[[T], None], listener)
-        normalized: Callable[[T, InvocationContext], None] = lambda transaction, _context: one_argument(transaction)  # noqa
+        one_argument = cast(Callable[[T], Any], listener)
+
+        def normalized(transaction: T, _context: InvocationContext) -> Any:
+            return one_argument(transaction)
     else:
-        normalized = cast(Callable[[T, InvocationContext], None], listener)
+        normalized = cast(Callable[[T, InvocationContext], Any], listener)
     return normalized
 
 
-type ListenerCallable[T] = Callable[[T], None] | Callable[[T, InvocationContext], None]
+type ListenerCallable[T] = Callable[[T], Any] | Callable[[T, InvocationContext], Any]
 
 
 @dataclass(frozen=True)
 class HTTPTransactionListener:
-    listener: Callable[[HTTPTransaction, InvocationContext], None]
+    listener: Callable[[HTTPTransaction, InvocationContext], Any]
     kind: Literal["http"] = "http"
 
     @classmethod
@@ -148,7 +188,7 @@ class HTTPTransactionListener:
 
 @dataclass(frozen=True)
 class WebsocketConnectionListener:
-    listener: Callable[[WebsocketConnection, InvocationContext], None]
+    listener: Callable[[WebsocketConnection, InvocationContext], Any]
     kind: Literal["websocket"] = "websocket"
 
     @classmethod
@@ -158,7 +198,7 @@ class WebsocketConnectionListener:
 
 @dataclass(frozen=True)
 class ServerSentEventListener:
-    listener: Callable[[ServerSentEvent, InvocationContext], None]
+    listener: Callable[[ServerSentEvent, InvocationContext], Any]
     kind: Literal["event_source"] = "event_source"
 
     @classmethod
@@ -168,7 +208,7 @@ class ServerSentEventListener:
 
 @dataclass(frozen=True)
 class FetchTextStreamEventListener:
-    listener: Callable[[FetchTextStreamEvent, InvocationContext], None]
+    listener: Callable[[FetchTextStreamEvent, InvocationContext], Any]
     kind: Literal["fetch_stream"] = "fetch_stream"
 
     @classmethod
@@ -179,12 +219,31 @@ class FetchTextStreamEventListener:
 @dataclass(frozen=True)
 class TimerEventListener:
     interval: float
-    listener: Callable[[Page, InvocationContext], None]
+    listener: Callable[[Page, InvocationContext], Any]
     kind: Literal["timer"] = "timer"
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.interval) or self.interval <= 0:
             raise ValueError("Timer interval must be a finite positive number")
+
+    @classmethod
+    def from_any(
+        cls,
+        listener: Callable[[Page, InvocationContext], Any] | Callable[[InvocationContext], Any],
+        interval: float = 1.0,
+    ) -> Self:
+        listener_signature = signature(listener)
+        try:
+            listener_signature.bind(None, None)
+        except TypeError:
+            listener_signature.bind(None)
+            one_argument = cast(Callable[[Page], Any], listener)
+
+            def normalized(transaction: Page, _context: InvocationContext) -> Any:
+                return one_argument(transaction)
+        else:
+            normalized = cast(Callable[[Page, InvocationContext], Any], listener)  # type: ignore
+        return cls(interval=interval, listener=normalized)
 
 
 type DevtoolsListener = (
@@ -273,13 +332,18 @@ class InvocationCreator[S, T]:
     def from_any(
         cls,
         on_start: Callable[[S, Page, InvocationContext], None] | Callable[[S, Page], None],
-        on_completed: Callable[[Page, InvocationContext], T] | Callable[[InvocationContext], T],
-        listeners: InvocationListeners,
+        on_completed: Callable[[Page, InvocationContext], T] | Callable[[InvocationContext], T] | None = None,
+        listeners: InvocationListeners = (),
     ) -> Self:
         """Create an invocation, resolving raw listener callbacks from their first parameter annotation."""
+        completion_callback = (
+            cls._resolve_on_completed(on_completed)
+            if on_completed is not None
+            else lambda _page, context: cast(T, context.listener_result)
+        )
         return cls(
             on_start=cls._resolve_on_start(on_start),
-            _on_completed_callback=cls._resolve_on_completed(on_completed),
+            _on_completed_callback=completion_callback,
             listeners=cls._resolve_listeners(listeners),
         )
 
@@ -347,9 +411,7 @@ class InvocationCreator[S, T]:
         if callable(listeners):
             return (_resolve_listener(listeners),)
         if not isinstance(listeners, Sequence):
-            raise TypeError(
-                "listeners must be a listener callback or a sequence of listener callbacks"
-            )
+            raise TypeError("listeners must be a listener callback or a sequence of listener callbacks")
         resolved: list[InvocationListener] = []
         for listener in listeners:
             if isinstance(listener, listener_types):
@@ -375,10 +437,7 @@ class _CompletionWaiter:
     def wait(self, page: Page) -> None:
         started_at = time.monotonic()
         deadline = started_at + self._timeout if self._timeout is not None else None
-        timers = [
-            (listener, started_at + listener.interval, 0)
-            for listener in self._timer_listeners
-        ]
+        timers = [(listener, started_at + listener.interval, 0) for listener in self._timer_listeners]
         while not self._context.completion_event.is_set():
             now = time.monotonic()
             if deadline is not None and deadline - now <= 0:
@@ -396,10 +455,16 @@ class _CompletionWaiter:
                             fired_at=fired_at,
                         )
                     )
+                    listener_started = self._context._begin_listener()
+                    if not listener_started:
+                        break
+                    result = _NO_LISTENER_RESULT
                     try:
-                        listener.listener(page, self._context)
+                        result = listener.listener(page, self._context)
                     except Exception as error:
                         self._context.fail(error)
+                    finally:
+                        self._context._finish_listener(result)
                     timers[index] = (listener, time.monotonic() + listener.interval, tick_count + 1)
                     if self._context.completion_event.is_set():
                         break
@@ -413,6 +478,7 @@ class _CompletionWaiter:
                 wait_seconds = min(wait_seconds, max(0, next_timer - now))
             page.wait_for_timeout(max(1, int(wait_seconds * 1000)))
 
+        self._context._finish_listeners()
         error = self._context.error
         if error is not None:
             raise error
@@ -459,10 +525,15 @@ class InvocationExecutor[S, T]:
         self, service: DevtoolsService, listener: DevtoolsListener, context: InvocationContext
     ) -> Disposable:
         def notify(event: Any) -> None:
+            if not context._begin_listener():
+                return
+            result = _NO_LISTENER_RESULT
             try:
-                listener.listener(event, context)
+                result = listener.listener(event, context)
             except Exception as error:
                 context.fail(error)
+            finally:
+                context._finish_listener(result)
 
         match listener:
             case HTTPTransactionListener():

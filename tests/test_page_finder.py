@@ -1,8 +1,12 @@
 from contextlib import nullcontext
 from types import SimpleNamespace
+from typing import cast
+
+from playwright.sync_api import Browser, Page
 
 from fairybrowser.page_finder import create_page_finder, windows
 from fairybrowser.page_finder.linux import LinuxPageFinder
+from fairybrowser.page_finder.protocol import PageFinderProtocol
 from fairybrowser.runners import browser as runner_browser
 from fairybrowser.runners import launcher, sync_page
 
@@ -25,7 +29,7 @@ def test_windows_page_finder_selects_page_matching_visible_browser_window(monkey
         lambda: [SimpleNamespace(pid=42, title="Example - Browser")],
     )
 
-    assert windows.WindowsPageFinder().get_page(browser, pid=7) is selected_page
+    assert windows.WindowsPageFinder().get_page(cast(Browser, browser), pid=7) is selected_page
 
 
 def test_linux_page_finder_returns_the_first_page_across_contexts():
@@ -37,13 +41,13 @@ def test_linux_page_finder_returns_the_first_page_across_contexts():
         ]
     )
 
-    assert LinuxPageFinder().get_page(browser, pid=7) is first_page
+    assert LinuxPageFinder().get_page(cast(Browser, browser), pid=7) is first_page
 
 
 def test_linux_page_finder_returns_none_when_no_pages_exist():
     browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[]), SimpleNamespace(pages=[])])
 
-    assert LinuxPageFinder().get_page(browser, pid=7) is None
+    assert LinuxPageFinder().get_page(cast(Browser, browser), pid=7) is None
 
 
 def test_create_page_finder_returns_platform_implementation(monkeypatch):
@@ -62,7 +66,10 @@ def test_sync_page_uses_injected_page_finder(monkeypatch):
     state = SimpleNamespace(port=1234, type="chromium", pid=7)
     browser = object()
     selected_page = object()
-    finder = SimpleNamespace(get_page=lambda actual_browser, pid: selected_page)
+    finder = cast(
+        PageFinderProtocol,
+        SimpleNamespace(get_page=lambda actual_browser, pid: cast(Page, selected_page)),
+    )
 
     monkeypatch.setattr(runner_browser, "_to_apt_execution_state", lambda browser_info: state)
     monkeypatch.setattr(runner_browser, "sync_playwright", lambda: nullcontext(object()))
