@@ -73,6 +73,7 @@ def _run_web_driver(port: int, info: BrowserInfo, options: list[str]) -> Executi
 
         browser_options = Options()
         browser_options.add_experimental_option("detach", True)
+        browser_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         for option in options:
             browser_options.add_argument(option)
         webdriver.Edge(options=browser_options)
@@ -81,6 +82,7 @@ def _run_web_driver(port: int, info: BrowserInfo, options: list[str]) -> Executi
 
         browser_options = Options()
         browser_options.add_experimental_option("detach", True)
+        browser_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         for option in options:
             browser_options.add_argument(option)
         webdriver.Chrome(options=browser_options)
