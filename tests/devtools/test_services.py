@@ -185,8 +185,9 @@ def test_terminate_detaches_cdp_session(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_selected_targets_capture_enabled_categories(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
+    caplog.set_level(logging.INFO)
     page_client = FakeCDPClient()
     flat_client = FakeFlatCDPConnection()
     received_loggers = []
@@ -281,7 +282,7 @@ def test_selected_targets_capture_enabled_categories(
 
     assert page_client.detach_count == 1
     assert flat_client.closed
-    assert "worker log" in capsys.readouterr().out
+    assert "worker log" in caplog.text
     assert fake_page.init_script is not None
     assert collector.network_log is not None
     transaction = collector.network_log.http_transactions[0]

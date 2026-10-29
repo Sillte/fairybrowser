@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from pathlib import Path
 from threading import Event
@@ -9,9 +10,10 @@ from fairybrowser.mouse.models import MouseEvent, MouseEventTypeEnum
 
 
 class MouseRecorder:
-    def __init__(self):
+    def __init__(self, logger: logging.Logger | None = None):
         self.stop_event = Event()
         self.events: list[MouseEvent] = []
+        self._logger = logger if logger is not None else logging.getLogger(__name__)
 
     def start(self, output_path: str | Path | None = None):
         if not output_path:
@@ -34,15 +36,15 @@ class MouseRecorder:
         def _on_key(key):
             try:
                 if key == pynput.keyboard.Key.esc:  # Escキーで停止
-                    print("\n🛑 ESC detected — recording stopped.")
+                    self._logger.info("ESC detected; mouse recording stopped.")
                     self.stop_event.set()
             except Exception:
-                pass
+                self._logger.exception("Failed to handle keyboard input during mouse recording")
 
         mouse_listener = pynput.mouse.Listener(on_click=_on_click)
         keyboard_listener = pynput.keyboard.Listener(on_press=_on_key)
 
-        print("🎬 マウス操作を記録中... ESCキーで停止します")
+        self._logger.info("マウス操作を記録中... ESCキーで停止します")
 
         mouse_listener.start()
         keyboard_listener.start()
@@ -53,7 +55,7 @@ class MouseRecorder:
         keyboard_listener.stop()
 
         output_path.write_text(json.dumps([elem.model_dump() for elem in self.events], indent=4, ensure_ascii=False))
-        print(f"💾 記録を保存しました: {output_path}")
+        self._logger.info("マウス操作の記録を保存しました: %s", output_path)
 
 
 if __name__ == "__main__":

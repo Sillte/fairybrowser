@@ -1,4 +1,5 @@
 import json
+import logging
 import urllib.request
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
 from fairybrowser.port_utils import is_port_free
 from fairybrowser.storage import StoragePathSolver
 
+logger = logging.getLogger(__name__)
 _storage_path_solver = StoragePathSolver()
 
 
@@ -106,6 +108,6 @@ def _is_browser_fetchable(port: int):
             if response.status == 200:
                 json.loads(response.read().decode())
     except Exception:
-        print("Debug for Exception in `_is_browser_fetchable.`")
+        logger.debug("Failed to fetch browser debugging endpoint %s", url, exc_info=True)
         return False
     return True

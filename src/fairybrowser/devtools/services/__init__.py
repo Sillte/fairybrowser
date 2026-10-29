@@ -378,7 +378,7 @@ class DevtoolsService:
                 if val is None:
                     val = arg.get("description", "<complex object>")
                 messages.append(str(val))
-            print(f"\n💬 Console ({type_}): {' '.join(messages)}")
+            self._logger.info("Browser console (%s): %s", type_, " ".join(messages))
 
         client.on("Runtime.consoleAPICalled", self._serialize(on_console))
 

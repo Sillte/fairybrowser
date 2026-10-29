@@ -1,8 +1,12 @@
+import logging
+
 from fairybrowser.invocation import (
     HTTPTransactionListener,
     InvocationCreator,
     InvocationExecutor,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def start(url, page, context):
@@ -30,4 +34,4 @@ if __name__ == "__main__":
     )
 
     api_calls = InvocationExecutor.from_any(creator).invoke("https://example.com")
-    print(api_calls)
+    logger.info("API calls: %s", api_calls)

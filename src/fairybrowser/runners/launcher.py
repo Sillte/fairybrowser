@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from fairybrowser.monitors import save_state
 from fairybrowser.port_utils import can_connect_port, find_available_port
 from fairybrowser.storage import StoragePathSolver
 
+logger = logging.getLogger(__name__)
 _storage_path_solver = StoragePathSolver()
 
 
@@ -124,7 +126,7 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
     """Run a Chromium-based browser and wait for its debugging port."""
     start_port = 13456 if info.type == "chromium" else 18456
     port = find_available_port(start=start_port)
-    print("port", port)
+    logger.debug("Selected browser debugging port: %s", port)
 
     default_options = [
         "--no-first-run",

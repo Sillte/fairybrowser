@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -15,8 +16,13 @@ from fairybrowser.page_finder.windows.process_utils import to_foreground
 
 
 class MousePlayer:
-    def __init__(self, inputs: str | Path | list[MouseEvent | MouseClickEvent]):
+    def __init__(
+        self,
+        inputs: str | Path | list[MouseEvent | MouseClickEvent],
+        logger: logging.Logger | None = None,
+    ):
         self.inputs = inputs
+        self._logger = logger if logger is not None else logging.getLogger(__name__)
         data = inputs
         if isinstance(data, (str, Path)):
             data = Path(data)
@@ -50,13 +56,13 @@ class MousePlayer:
         """
 
         if not self.events:
-            print("⚠️ 再生するイベントがありません。")
+            self._logger.warning("再生するイベントがありません。")
             return
 
         if pid is not None:
             to_foreground(pid)
 
-        print(f"▶️ 1秒後マウス操作を再生します（speed={speed}）")
+        self._logger.info("1秒後にマウス操作を再生します（speed=%s）", speed)
         time.sleep(1)
 
         # 時間差を計算
@@ -68,7 +74,7 @@ class MousePlayer:
                     time.sleep(delay)
             self._click(event)
 
-        print("✅ 再生完了！")
+        self._logger.info("マウス操作の再生が完了しました。")
 
     def _click(self, event: MouseClickEvent, duration: float = 0.2):
         pyautogui.moveTo(event.x0, event.y0, duration=duration)

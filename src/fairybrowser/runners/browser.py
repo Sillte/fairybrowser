@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -33,8 +34,11 @@ def _to_apt_execution_state(
 
 
 @contextmanager
-def sync_browser(info: BrowserInfo | str | None = None) -> Generator[Browser, None, None]:
+def sync_browser(
+    info: BrowserInfo | str | None = None, *, logger: logging.Logger | None = None
+) -> Generator[Browser, None, None]:
     """Get a Playwright Browser connected to the managed browser."""
+    _ = logger or logging.getLogger()
     state = _to_apt_execution_state(info)
     with sync_playwright() as playwright:
         browser = _fetch_browser(playwright, state.port, state.type)
@@ -46,8 +50,10 @@ def sync_page(
     browser_info: BrowserInfo | str | None = None,
     *,
     page_finder: PageFinderProtocol | None = None,
+    logger: logging.Logger | None = None,
 ) -> Generator[Page, None, None]:
     """Acquire a page from the managed browser."""
+    logger = logger or logging.getLogger()
     state = _to_apt_execution_state(browser_info)
     with sync_playwright() as playwright:
         browser = _fetch_browser(playwright, port=state.port, type=state.type)
@@ -56,8 +62,7 @@ def sync_page(
         if page is not None:
             yield page
         else:
-            print("Cannot identify the appropriate `page`.", flush=True)
-            print("Fallback is applied.", flush=True)
+            logger.info("Cannot identify the appropriate `page`, Fallback is applied.")
             yield browser.new_page()
 
 
