@@ -12,7 +12,12 @@ from fairybrowser.monitors import (
     to_browser_info,
 )
 from fairybrowser.page_finder import PageFinderProtocol, create_page_finder
-from fairybrowser.runners.launcher import _run_chromium
+from fairybrowser.runners.launcher import (
+    _is_execution_state_for_profile,
+    _is_execution_state_process,
+    _profile_directory,
+    _run_chromium,
+)
 
 
 def _to_apt_execution_state(
@@ -20,17 +25,18 @@ def _to_apt_execution_state(
 ) -> ExecutionState:
     if browser_info is not None:
         browser_info = to_browser_info(browser_info)
+        user_dir = _profile_directory(browser_info)
         if is_existent(browser_info):
             state = load_state(browser_info)
-        else:
-            state = _run_chromium(browser_info)
+            if _is_execution_state_for_profile(state, user_dir):
+                return state
+        return _run_chromium(browser_info)
     else:
         execs = get_execution_infos()
-        if not execs:
-            state = _run_chromium(to_browser_info(None))
-        else:
-            state = list(execs.values())[0]
-    return state
+        for state in execs.values():
+            if _is_execution_state_process(state):
+                return state
+        return _run_chromium(to_browser_info(None))
 
 
 @contextmanager
@@ -63,7 +69,15 @@ def sync_page(
             yield page
         else:
             logger.info("Cannot identify the appropriate `page`, Fallback is applied.")
-            yield browser.new_page()
+            contexts = browser.contexts
+            for context in contexts:
+                if context.pages:
+                    yield context.pages[0]
+                    return
+            if contexts:
+                yield contexts[0].new_page()
+            else:
+                raise RuntimeError("No context found in the browser, cannot acquire a page.")
 
 
 def _fetch_browser(playwright: Playwright, port: int, type: BrowserType) -> Browser:

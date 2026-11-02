@@ -32,7 +32,9 @@ class WindowsPageFinder(PageFinderProtocol):
                             bounds = {"windowState": "normal"} if targets else {}
                         except Exception:
                             continue
-
-                    if bounds.get("windowState") in {"normal", "maximized"} and window_title.startswith(page.title()):
-                        return page
+                    finally:
+                        if bounds.get("windowState") in {"normal", "maximized"} and window_title.startswith(
+                            page.title()
+                        ):
+                            return page
         return None
