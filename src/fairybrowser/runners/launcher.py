@@ -11,7 +11,14 @@ import psutil
 from playwright.sync_api import sync_playwright
 
 from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
-from fairybrowser.monitors import _is_browser_fetchable, save_state
+from fairybrowser.monitors import (
+    _is_browser_fetchable,
+    get_execution_infos,
+    is_existent,
+    load_state,
+    save_state,
+    to_browser_info,
+)
 from fairybrowser.port_utils import can_connect_port, find_available_port
 from fairybrowser.storage import StoragePathSolver
 
@@ -283,7 +290,6 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
                 )
             save_state(execution_info)
             return execution_info
-
         start_port = 13456 if info.type == "chromium" else 18456
         port = find_available_port(start=start_port)
         logger.debug("Selected browser debugging port: %s", port)
@@ -315,3 +321,20 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
             raise RuntimeError(f"The debugging endpoint for profile {user_dir} is unavailable.")
         save_state(execution_info)
         return execution_info
+
+
+def get_execution_state(info: BrowserInfo | str | None = None) -> ExecutionState:
+    """Return a validated managed-browser state, starting the requested profile if needed."""
+    if info is not None:
+        browser_info = to_browser_info(info)
+        user_dir = _profile_directory(browser_info)
+        if is_existent(browser_info):
+            state = load_state(browser_info)
+            if _is_execution_state_for_profile(state, user_dir):
+                return state
+        return _run_chromium(browser_info)
+
+    for state in get_execution_infos().values():
+        if _is_execution_state_process(state):
+            return state
+    return _run_chromium(to_browser_info())

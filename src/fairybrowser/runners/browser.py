@@ -4,39 +4,9 @@ from contextlib import contextmanager
 
 from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 
-from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
-from fairybrowser.monitors import (
-    get_execution_infos,
-    is_existent,
-    load_state,
-    to_browser_info,
-)
+from fairybrowser.models import BrowserInfo, BrowserType
 from fairybrowser.page_finder import PageFinderProtocol, create_page_finder
-from fairybrowser.runners.launcher import (
-    _is_execution_state_for_profile,
-    _is_execution_state_process,
-    _profile_directory,
-    _run_chromium,
-)
-
-
-def _to_apt_execution_state(
-    browser_info: BrowserInfo | str | None = None,
-) -> ExecutionState:
-    if browser_info is not None:
-        browser_info = to_browser_info(browser_info)
-        user_dir = _profile_directory(browser_info)
-        if is_existent(browser_info):
-            state = load_state(browser_info)
-            if _is_execution_state_for_profile(state, user_dir):
-                return state
-        return _run_chromium(browser_info)
-    else:
-        execs = get_execution_infos()
-        for state in execs.values():
-            if _is_execution_state_process(state):
-                return state
-        return _run_chromium(to_browser_info(None))
+from fairybrowser.runners.launcher import get_execution_state
 
 
 @contextmanager
@@ -45,7 +15,7 @@ def sync_browser(
 ) -> Generator[Browser, None, None]:
     """Get a Playwright Browser connected to the managed browser."""
     _ = logger or logging.getLogger()
-    state = _to_apt_execution_state(info)
+    state = get_execution_state(info)
     with sync_playwright() as playwright:
         browser = _fetch_browser(playwright, state.port, state.type)
         yield browser
@@ -60,7 +30,7 @@ def sync_page(
 ) -> Generator[Page, None, None]:
     """Acquire a page from the managed browser."""
     logger = logger or logging.getLogger()
-    state = _to_apt_execution_state(browser_info)
+    state = get_execution_state(browser_info)
     with sync_playwright() as playwright:
         browser = _fetch_browser(playwright, port=state.port, type=state.type)
         finder = create_page_finder() if page_finder is None else page_finder
@@ -68,16 +38,18 @@ def sync_page(
         if page is not None:
             yield page
         else:
-            logger.info("Cannot identify the appropriate `page`, Fallback is applied.")
-            contexts = browser.contexts
-            for context in contexts:
-                if context.pages:
-                    yield context.pages[0]
-                    return
-            if contexts:
-                yield contexts[0].new_page()
-            else:
-                raise RuntimeError("No context found in the browser, cannot acquire a page.")
+            yield _fallback_page(browser, logger)
+
+
+def _fallback_page(browser: Browser, logger: logging.Logger) -> Page:
+    logger.info("Cannot identify the appropriate `page`, Fallback is applied.")
+    contexts = browser.contexts
+    for context in contexts:
+        if context.pages:
+            return context.pages[0]
+    if contexts:
+        return contexts[0].new_page()
+    raise RuntimeError("No context found in the browser, cannot acquire a page.")
 
 
 def _fetch_browser(playwright: Playwright, port: int, type: BrowserType) -> Browser:

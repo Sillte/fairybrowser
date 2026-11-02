@@ -2,7 +2,7 @@ import psutil
 from playwright.sync_api import Browser, Page
 
 from fairybrowser.page_finder.protocol import PageFinderProtocol
-from fairybrowser.page_finder.windows.process_utils import get_visible_windows
+from fairybrowser.page_finder.windows.process_utils import HwndInfo, get_visible_windows
 
 
 class WindowsPageFinder(PageFinderProtocol):
@@ -12,29 +12,26 @@ class WindowsPageFinder(PageFinderProtocol):
         process = psutil.Process()
         descendant_pids = {child.pid for child in process.children(recursive=True)}
         descendant_pids.add(pid)
+        return _find_page_for_windows(browser, os_infos, descendant_pids)
 
-        infos = [info for info in os_infos if info.pid in descendant_pids]
-        if not infos:
-            return None
 
-        for target_info in infos:
-            window_title = target_info.title
-            for context in browser.contexts:
-                for page in context.pages:
-                    client = context.new_cdp_session(page)
+def _find_page_for_windows(browser: Browser, os_infos: list[HwndInfo], process_ids: set[int]) -> Page | None:
+    infos = [info for info in os_infos if info.pid in process_ids]
+    for target_info in infos:
+        window_title = target_info.title
+        for context in browser.contexts:
+            for page in context.pages:
+                client = context.new_cdp_session(page)
+                try:
+                    window_info = client.send("Browser.getWindowForTarget")
+                    bounds = window_info.get("bounds", {})
+                except Exception:
+                    # Some browsers, such as Edge, might not support this command.
                     try:
-                        window_info = client.send("Browser.getWindowForTarget")
-                        bounds = window_info.get("bounds", {})
+                        targets = client.send("Target.getTargets")["targetInfos"]
+                        bounds = {"windowState": "normal"} if targets else {}
                     except Exception:
-                        # Some browsers, such as Edge, might not support this command.
-                        try:
-                            targets = client.send("Target.getTargets")["targetInfos"]
-                            bounds = {"windowState": "normal"} if targets else {}
-                        except Exception:
-                            continue
-                    finally:
-                        if bounds.get("windowState") in {"normal", "maximized"} and window_title.startswith(
-                            page.title()
-                        ):
-                            return page
-        return None
+                        continue
+                if bounds.get("windowState") in {"normal", "maximized"} and window_title.startswith(page.title()):
+                    return page
+    return None

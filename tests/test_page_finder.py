@@ -1,36 +1,35 @@
-from contextlib import nullcontext
+import logging
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from playwright.sync_api import Browser, Page
+from playwright.sync_api import Browser
 
-from fairybrowser.page_finder import create_page_finder, windows
+from fairybrowser.page_finder import windows
 from fairybrowser.page_finder.linux import LinuxPageFinder
-from fairybrowser.page_finder.protocol import PageFinderProtocol
-from fairybrowser.runners import browser as runner_browser
-from fairybrowser.runners import launcher, sync_page
+from fairybrowser.page_finder.windows.process_utils import HwndInfo
+from fairybrowser.runners import browser as browser_runner
+from fairybrowser.runners import launcher
 
 
-def test_windows_page_finder_selects_page_matching_visible_browser_window(monkeypatch):
+def test_windows_page_finder_selects_page_matching_visible_browser_window():
     selected_page = SimpleNamespace(title=lambda: "Example")
     context = SimpleNamespace(
         pages=[selected_page],
-        new_cdp_session=lambda page: SimpleNamespace(
-            send=lambda command: {"bounds": {"windowState": "maximized"}}
+        new_cdp_session=lambda _page: SimpleNamespace(
+            send=lambda _command: {"bounds": {"windowState": "maximized"}}
         ),
     )
     browser = SimpleNamespace(contexts=[context])
-    process = SimpleNamespace(children=lambda recursive: [SimpleNamespace(pid=42)])
 
-    monkeypatch.setattr(windows.psutil, "Process", lambda: process)
-    monkeypatch.setattr(
-        windows,
-        "get_visible_windows",
-        lambda: [SimpleNamespace(pid=42, title="Example - Browser")],
+    assert (
+        windows._find_page_for_windows(
+            cast(Browser, browser),
+            [HwndInfo(hwnd=1, title="Example - Browser", pid=42, thread_id=1)],
+            {42},
+        )
+        is selected_page
     )
-
-    assert windows.WindowsPageFinder().get_page(cast(Browser, browser), pid=7) is selected_page
 
 
 def test_linux_page_finder_returns_the_first_page_across_contexts():
@@ -51,77 +50,27 @@ def test_linux_page_finder_returns_none_when_no_pages_exist():
     assert LinuxPageFinder().get_page(cast(Browser, browser), pid=7) is None
 
 
-def test_create_page_finder_returns_platform_implementation(monkeypatch):
-    monkeypatch.setattr("fairybrowser.page_finder.sys.platform", "linux")
-
-    assert isinstance(create_page_finder(), LinuxPageFinder)
-
-
-def test_create_page_finder_returns_windows_implementation(monkeypatch):
-    monkeypatch.setattr("fairybrowser.page_finder.sys.platform", "win32")
-
-    assert isinstance(create_page_finder(), windows.WindowsPageFinder)
-
-
-def test_sync_page_uses_injected_page_finder(monkeypatch):
-    state = SimpleNamespace(port=1234, type="chromium", pid=7)
-    browser = object()
-    selected_page = object()
-    finder = cast(
-        PageFinderProtocol,
-        SimpleNamespace(get_page=lambda actual_browser, pid: cast(Page, selected_page)),
-    )
-
-    monkeypatch.setattr(runner_browser, "_to_apt_execution_state", lambda browser_info: state)
-    monkeypatch.setattr(runner_browser, "sync_playwright", lambda: nullcontext(object()))
-    monkeypatch.setattr(runner_browser, "_fetch_browser", lambda *args, **kwargs: browser)
-
-    with sync_page(page_finder=finder) as page:
-        assert page is selected_page
-
-
-def test_sync_page_fallback_reuses_first_page_in_existing_context(monkeypatch):
-    state = SimpleNamespace(port=1234, type="chromium", pid=7)
+def test_fallback_page_reuses_first_page_from_existing_context():
     existing_page = object()
     context = SimpleNamespace(pages=[existing_page], new_page=lambda: object())
     browser = SimpleNamespace(contexts=[context])
-    finder = cast(PageFinderProtocol, SimpleNamespace(get_page=lambda actual_browser, pid: None))
 
-    monkeypatch.setattr(runner_browser, "_to_apt_execution_state", lambda browser_info: state)
-    monkeypatch.setattr(runner_browser, "sync_playwright", lambda: nullcontext(object()))
-    monkeypatch.setattr(runner_browser, "_fetch_browser", lambda *args, **kwargs: browser)
-
-    with sync_page(page_finder=finder) as page:
-        assert page is existing_page
+    assert browser_runner._fallback_page(cast(Browser, browser), logging.getLogger()) is existing_page
 
 
-def test_sync_page_fallback_creates_page_in_existing_context(monkeypatch):
-    state = SimpleNamespace(port=1234, type="chromium", pid=7)
+def test_fallback_page_creates_page_in_existing_context():
     created_page = object()
     context = SimpleNamespace(pages=[], new_page=lambda: created_page)
     browser = SimpleNamespace(contexts=[context])
-    finder = cast(PageFinderProtocol, SimpleNamespace(get_page=lambda actual_browser, pid: None))
 
-    monkeypatch.setattr(runner_browser, "_to_apt_execution_state", lambda browser_info: state)
-    monkeypatch.setattr(runner_browser, "sync_playwright", lambda: nullcontext(object()))
-    monkeypatch.setattr(runner_browser, "_fetch_browser", lambda *args, **kwargs: browser)
-
-    with sync_page(page_finder=finder) as page:
-        assert page is created_page
+    assert browser_runner._fallback_page(cast(Browser, browser), logging.getLogger()) is created_page
 
 
-def test_sync_page_fallback_raises_when_browser_has_no_contexts(monkeypatch):
-    state = SimpleNamespace(port=1234, type="chromium", pid=7)
+def test_fallback_page_raises_when_browser_has_no_contexts():
     browser = SimpleNamespace(contexts=[])
-    finder = cast(PageFinderProtocol, SimpleNamespace(get_page=lambda actual_browser, pid: None))
-
-    monkeypatch.setattr(runner_browser, "_to_apt_execution_state", lambda browser_info: state)
-    monkeypatch.setattr(runner_browser, "sync_playwright", lambda: nullcontext(object()))
-    monkeypatch.setattr(runner_browser, "_fetch_browser", lambda *args, **kwargs: browser)
 
     with pytest.raises(RuntimeError, match="No context found in the browser"):
-        with sync_page(page_finder=finder):
-            pass
+        browser_runner._fallback_page(cast(Browser, browser), logging.getLogger())
 
 
 def test_get_browser_pid_by_debug_port_finds_linux_chromium(monkeypatch):
