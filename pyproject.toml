@@ -49,6 +49,7 @@ ignore = [
 
 [tool.ty.rules]
 unused-ignore-comment = "ignore"
+unused-type-ignore-comment = "ignore"
 
 [tool.uv]
 exclude-newer = "1 week"
