@@ -1,8 +1,41 @@
 from typing import Literal
 
-from selectolax.lexbor import LexborHTMLParser
+from selectolax.lexbor import LexborNode
+
+from .html_simplifier import (
+    HTMLSimplifier,
+    KeepRelevantAttributesRule,
+    RemoveScriptAndStyleRule,
+)
 
 HtmlSimplificationMode = Literal["light", "balanced", "aggressive"]
+
+
+class _RemoveInlineStylesRule:
+    def predicate(self, node: LexborNode) -> bool:
+        return "style" in node.attributes
+
+    def simplify(self, node: LexborNode) -> None:
+        del node.attrs["style"]
+
+
+class _RemoveDecorativeSvgRule:
+    def predicate(self, node: LexborNode) -> bool:
+        if node.tag != "svg":
+            return False
+
+        attrs = {name.lower(): value for name, value in node.attributes.items()}
+        role_tokens = set((attrs.get("role") or "").lower().split())
+        explicitly_hidden = (attrs.get("aria-hidden") or "").lower() == "true"
+        presentational = bool(role_tokens.intersection({"none", "presentation"}))
+        has_accessible_metadata = "role" in attrs or "title" in attrs or any(
+            name.startswith("aria-") for name in attrs
+        )
+        has_text_content = bool(node.text(deep=True, strip=True))
+        return explicitly_hidden or presentational or not (has_accessible_metadata or has_text_content)
+
+    def simplify(self, node: LexborNode) -> None:
+        node.decompose()
 
 
 def simplify_html_for_playwright(
@@ -19,77 +52,22 @@ def simplify_html_for_playwright(
     if mode not in ("light", "balanced", "aggressive"):
         raise ValueError(f"Unsupported HTML simplification mode: {mode!r}")
 
-    parser = LexborHTMLParser(html)
-    parser.strip_tags(["script", "style"])
-
+    rules = []
     if mode == "aggressive":
-        for node in parser.css("svg"):
-            attrs = {name.lower(): value for name, value in node.attributes.items()}
-            role_tokens = set((attrs.get("role") or "").lower().split())
-            explicitly_hidden = (attrs.get("aria-hidden") or "").lower() == "true"
-            presentational = bool(role_tokens.intersection({"none", "presentation"}))
-            has_accessible_metadata = "role" in attrs or "title" in attrs or any(
-                name.startswith("aria-") for name in attrs
-            )
-            has_text_content = bool(node.text(deep=True, strip=True))
-
-            if explicitly_hidden or presentational or not (has_accessible_metadata or has_text_content):
-                node.decompose()
-
+        rules.append(_RemoveDecorativeSvgRule())
     if mode != "light":
-        for node in parser.css("*"):
-            if "style" in node.attributes:
-                del node.attrs["style"]
+        rules.append(_RemoveInlineStylesRule())
 
-    return parser.html or ""
+    return HTMLSimplifier(
+        rules=rules,
+        default_rules=[RemoveScriptAndStyleRule()],
+    ).simplify(html)
 
 
 def clean_html(html: str) -> str:
-    KEEP_ATTRS = {
-        "id",
-        "class",
-        "name",
-        "type",
-        "role",
-        "title",
-        "href",
-        "for",
-        "value",
-        "placeholder",
-        "contenteditable",
-        "tabindex",
-        "alt",
-        "checked",
-        "selected",
-        "disabled",
-        "multiple",
-        "readonly",
-        "required",
-        "src",
-        "autocomplete",
-        "min",
-        "max",
-        "step",
-        "minlength",
-        "maxlength",
-        "pattern",
-    }
-
-    # data-* と aria-* はすべて残す
-    KEEP_PREFIXES = ("data-", "aria-")
-
-    tree = LexborHTMLParser(html)
-
-    for node in tree.css("*"):
-        attrs = node.attributes
-
-        for attr in list(attrs.keys()):
-            attr_lower = attr.lower()
-
-            if attr_lower in KEEP_ATTRS or attr_lower.startswith(KEEP_PREFIXES):
-                continue
-
-            # selectolax の属性辞書から不要な属性を削除
-            del attrs[attr]
-
-    return str(tree.html)
+    return HTMLSimplifier(
+        rules=[KeepRelevantAttributesRule()],
+        node_protection_rules=(),
+        subtree_protection_rules=(),
+        default_rules=(),
+    ).simplify(html)

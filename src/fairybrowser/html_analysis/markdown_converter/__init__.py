@@ -20,9 +20,22 @@ from fairybrowser.html_analysis.markdown_converter.converters import (
     StrikethroughConverter,
     TextConverter,
 )
-from fairybrowser.html_analysis.markdown_converter.models import ConverterProtocol, InputContext
+from fairybrowser.html_analysis.markdown_converter.models import (
+    ConverterProtocol,
+    InputContext,
+    NodeProcessorProtocol,
+    OutputContext,
+)
 
 from .processor import Processor
+
+__all__ = [
+    "ConverterProtocol",
+    "InputContext",
+    "MarkdownConverter",
+    "NodeProcessorProtocol",
+    "OutputContext",
+]
 
 
 class MarkdownConverter:

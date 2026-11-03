@@ -2,7 +2,11 @@ from typing import cast
 
 import pytest
 
-from fairybrowser.html_analysis.simplify_html import HtmlSimplificationMode, simplify_html_for_playwright
+from fairybrowser.html_analysis.simplify_html import (
+    HtmlSimplificationMode,
+    clean_html,
+    simplify_html_for_playwright,
+)
 
 
 def test_light_mode_removes_script_and_stylesheet_elements_only():
@@ -48,6 +52,25 @@ def test_aggressive_mode_removes_only_decorative_svg():
     assert "Chart label" in simplified
     assert "Brand mark" in simplified
     assert 'title="Embedded content"' in simplified
+
+
+def test_clean_html_filters_attributes_on_all_elements_without_removing_content():
+    html = (
+        '<html custom-root="x"><head custom-head="x"></head><body>'
+        '<button onclick="send()" data-action="send" aria-label="Send">Go</button>'
+        "<script>payload()</script></body></html>"
+    )
+
+    simplified = clean_html(html)
+
+    assert "custom-root" not in simplified
+    assert "custom-head" not in simplified
+    assert "onclick" not in simplified
+    assert 'data-action="send"' in simplified
+    assert 'aria-label="Send"' in simplified
+    assert "Go" in simplified
+    assert "<script>" in simplified
+    assert "payload()" in simplified
 
 
 def test_unknown_mode_raises_value_error():

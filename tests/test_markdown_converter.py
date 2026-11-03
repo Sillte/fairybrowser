@@ -1,7 +1,6 @@
 from typing import Sequence
 
-from fairybrowser.html_analysis.markdown_converter import MarkdownConverter
-from fairybrowser.html_analysis.markdown_converter.models import InputContext, OutputContext
+from fairybrowser import ConverterProtocol, InputContext, MarkdownConverter, OutputContext
 
 
 def test_converts_headings_paragraphs_and_inline_emphasis():
@@ -55,6 +54,7 @@ class CustomParagraphConverter:
 
 
 def test_custom_converter_takes_precedence_over_basic_converter():
-    markdown = MarkdownConverter(converters=[CustomParagraphConverter()]).convert("<p>text</p>")
+    converter: ConverterProtocol = CustomParagraphConverter()
+    markdown = MarkdownConverter(converters=[converter]).convert("<p>text</p>")
 
     assert markdown == "custom"
