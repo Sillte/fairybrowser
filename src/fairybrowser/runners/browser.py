@@ -35,40 +35,34 @@ def sync_page(
         browser = _fetch_browser(playwright, port=state.port, type=state.type)
         finder = create_page_finder() if page_finder is None else page_finder
         for attempt in range(2):
-            if not browser.is_connected():
-                if attempt == 1:
-                    raise RuntimeError("Browser disconnected while acquiring a page.")
-                logger.warning("Browser disconnected while acquiring a page; reconnecting to CDP.")
-                browser = _fetch_browser(playwright, port=state.port, type=state.type)
-                continue
-
-            try:
-                page = finder.get_page(browser, state.pid)
-                if page is not None and page.is_closed():
-                    logger.info("Page finder returned a closed page; using a fallback page.")
-                    page = None
-                if page is None:
-                    logger.warning("No live page was found; restarting the browser for its profile.")
-                    state = restart_browser(browser_info)
-                    browser = _fetch_browser(playwright, port=state.port, type=state.type)
-                    page = _fallback_page(browser, logger)
-                if page.is_closed():
-                    raise RuntimeError("The selected page closed while it was being acquired.")
-            except Exception:
-                if attempt == 0 and not browser.is_connected():
-                    logger.warning("Browser disconnected while acquiring a page; reconnecting to CDP.")
-                    browser = _fetch_browser(playwright, port=state.port, type=state.type)
-                    continue
-                raise
-
-            if not browser.is_connected():
-                if attempt == 0:
-                    logger.warning("Browser disconnected while acquiring a page; reconnecting to CDP.")
-                    browser = _fetch_browser(playwright, port=state.port, type=state.type)
-                    continue
+            page = _find_live_page(browser, finder, state.pid) if browser.is_connected() else None
+            if browser.is_connected():
+                break
+            if attempt:
                 raise RuntimeError("Browser disconnected while acquiring a page.")
-            yield page
-            return
+            logger.warning("Browser disconnected while acquiring a page; reconnecting to CDP.")
+            browser = _fetch_browser(playwright, port=state.port, type=state.type)
+
+        if page is None:
+            logger.warning("No live page was found; restarting the browser for its profile.")
+            state = restart_browser(browser_info)
+            browser = _fetch_browser(playwright, port=state.port, type=state.type)
+            page = _fallback_page(browser, logger)
+        if not browser.is_connected():
+            raise RuntimeError("Browser disconnected while acquiring a page.")
+        if page.is_closed():
+            raise RuntimeError("The selected page closed while it was being acquired.")
+        yield page
+
+
+def _find_live_page(browser: Browser, finder: PageFinderProtocol, pid: int) -> Page | None:
+    try:
+        page = finder.get_page(browser, pid)
+        return None if page is not None and page.is_closed() else page
+    except Exception:
+        if browser.is_connected():
+            raise
+        return None
 
 
 def _fallback_page(browser: Browser, logger: logging.Logger) -> Page:
