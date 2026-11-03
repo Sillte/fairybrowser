@@ -58,6 +58,7 @@ def test_sync_page_restarts_browser_when_no_live_page_is_found(monkeypatch, find
         contexts=[SimpleNamespace(pages=[], new_page=lambda: new_page)],
     )
     new_state = SimpleNamespace(port=2, type="chromium", pid=43)
+
     class StaticFinder:
         def get_page(self, browser: Browser, pid: int) -> Page | None:
             return cast(Page | None, finder_page)
