@@ -324,8 +324,7 @@ class NetworkEventCapturer:
                     params={
                         key: value
                         for key, value in params.items()
-                        if key not in {"requestId", "timestamp", "url"}
-                        and not (key == "response" and has_frame_data)
+                        if key not in {"requestId", "timestamp", "url"} and not (key == "response" and has_frame_data)
                     },
                 )
                 self._event_publisher.publish(event)

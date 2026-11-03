@@ -21,6 +21,8 @@ def _find_page_for_windows(browser: Browser, os_infos: list[HwndInfo], process_i
         window_title = target_info.title
         for context in browser.contexts:
             for page in context.pages:
+                if not page.url:
+                    continue
                 client = context.new_cdp_session(page)
                 try:
                     window_info = client.send("Browser.getWindowForTarget")

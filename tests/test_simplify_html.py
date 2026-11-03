@@ -22,7 +22,9 @@ def test_light_mode_removes_script_and_stylesheet_elements_only():
 
 
 def test_balanced_mode_removes_inline_styles_and_preserves_attributes():
-    html = '<button class="submit" style="display: none" data-action="send" aria-label="Send" custom="value">Go</button>'
+    html = (
+        '<button class="submit" style="display: none" data-action="send" aria-label="Send" custom="value">Go</button>'
+    )
 
     simplified = simplify_html_for_playwright(html)
 

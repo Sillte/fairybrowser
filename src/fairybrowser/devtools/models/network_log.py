@@ -54,9 +54,13 @@ class NetworkLog:
     def get_http_transactions(self, method: str | None = None, path: str | None = None) -> list[HTTPTransaction]:
         transactions = self.http_transactions
         if method:
-            transactions = [transaction for transaction in transactions if method.lower() in transaction.request.method.lower()]
+            transactions = [
+                transaction for transaction in transactions if method.lower() in transaction.request.method.lower()
+            ]
         if path:
-            transactions = [transaction for transaction in transactions if path.lower() in transaction.request.url.lower()]
+            transactions = [
+                transaction for transaction in transactions if path.lower() in transaction.request.url.lower()
+            ]
         return transactions
 
     def snapshot(self) -> NetworkLogSnapshot:

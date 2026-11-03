@@ -12,7 +12,9 @@ def test_converts_headings_paragraphs_and_inline_emphasis():
 
 
 def test_converts_links_images_inline_code_and_line_breaks():
-    html = '<p><a href="https://example.com/a b">link</a> <code>value</code><br><img src="/image.png" alt="diagram"></p>'
+    html = (
+        '<p><a href="https://example.com/a b">link</a> <code>value</code><br><img src="/image.png" alt="diagram"></p>'
+    )
 
     markdown = MarkdownConverter().convert(html)
 
@@ -20,7 +22,9 @@ def test_converts_links_images_inline_code_and_line_breaks():
 
 
 def test_converts_nested_lists_and_blockquotes():
-    html = "<ol start='3'><li>first<ul><li>nested</li></ul></li><li>second</li></ol><blockquote><p>quoted</p></blockquote>"
+    html = (
+        "<ol start='3'><li>first<ul><li>nested</li></ul></li><li>second</li></ol><blockquote><p>quoted</p></blockquote>"
+    )
 
     markdown = MarkdownConverter().convert(html)
 

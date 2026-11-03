@@ -170,10 +170,7 @@ class ListConverter:
                 marker = f"{number}." if ordered else "-"
                 indentation = " " * (len(marker) + 1)
                 lines.append(f"{marker} {content_lines[0]}".rstrip())
-                lines.extend(
-                    f"{indentation}{line}" if line else ""
-                    for line in content_lines[1:]
-                )
+                lines.extend(f"{indentation}{line}" if line else "" for line in content_lines[1:])
                 if ordered:
                     number += 1
             child = child.next

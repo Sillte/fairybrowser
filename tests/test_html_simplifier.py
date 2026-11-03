@@ -50,9 +50,7 @@ def test_subtree_protection_skips_matching_node_and_descendants():
         subtree_protection_rules=[_ProtectDiv()],
     )
 
-    simplified = simplifier.simplify(
-        "<div><script>protected()</script></div><script>removed()</script>"
-    )
+    simplified = simplifier.simplify("<div><script>protected()</script></div><script>removed()</script>")
 
     assert "protected()" in simplified
     assert "removed()" not in simplified

@@ -28,9 +28,7 @@ class _RemoveDecorativeSvgRule:
         role_tokens = set((attrs.get("role") or "").lower().split())
         explicitly_hidden = (attrs.get("aria-hidden") or "").lower() == "true"
         presentational = bool(role_tokens.intersection({"none", "presentation"}))
-        has_accessible_metadata = "role" in attrs or "title" in attrs or any(
-            name.startswith("aria-") for name in attrs
-        )
+        has_accessible_metadata = "role" in attrs or "title" in attrs or any(name.startswith("aria-") for name in attrs)
         has_text_content = bool(node.text(deep=True, strip=True))
         return explicitly_hidden or presentational or not (has_accessible_metadata or has_text_content)
 

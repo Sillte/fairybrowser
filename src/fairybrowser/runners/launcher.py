@@ -3,7 +3,7 @@ import logging
 import os
 import subprocess
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -43,10 +43,7 @@ def _browser_names(browser_type: BrowserType) -> set[str]:
 def _is_browser_process(name: str, cmdline: list[str], browser_type: BrowserType) -> bool:
     names = _browser_names(browser_type)
     executable_name = Path(cmdline[0]).name.lower() if cmdline else ""
-    return (
-        (name.lower() in names or executable_name in names)
-        and not any(arg.startswith("--type=") for arg in cmdline)
-    )
+    return (name.lower() in names or executable_name in names) and not any(arg.startswith("--type=") for arg in cmdline)
 
 
 def _argument_value(cmdline: list[str], name: str) -> str | None:
@@ -83,18 +80,13 @@ def _debug_port(cmdline: list[str]) -> int | None:
     return port if 1 <= port <= 65535 else None
 
 
-def _get_browser_processes_by_profile(
-    user_dir: Path, browser_type: BrowserType
-) -> list[tuple[int, list[str]]]:
+def _get_browser_processes_by_profile(user_dir: Path, browser_type: BrowserType) -> list[tuple[int, list[str]]]:
     matches = []
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             name = proc.info["name"] or ""
             cmdline = proc.info["cmdline"] or []
-            if (
-                _is_browser_process(name, cmdline, browser_type)
-                and _process_uses_profile(cmdline, user_dir)
-            ):
+            if _is_browser_process(name, cmdline, browser_type) and _process_uses_profile(cmdline, user_dir):
                 matches.append((proc.info["pid"], cmdline))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
@@ -125,9 +117,7 @@ def _is_execution_state_process(state: ExecutionState) -> bool:
     return _is_browser_process(name, cmdline, state.type) and _debug_port(cmdline) == state.port
 
 
-def _state_from_profile_process(
-    info: BrowserInfo, user_dir: Path
-) -> ExecutionState | None:
+def _state_from_profile_process(info: BrowserInfo, user_dir: Path) -> ExecutionState | None:
     processes = _get_browser_processes_by_profile(user_dir, info.type)
     if not processes:
         return None
@@ -145,8 +135,69 @@ def _state_from_profile_process(
     return ExecutionState(name=info.name, type=info.type, port=port, pid=pid)
 
 
+def _terminate_profile_processes(
+    user_dir: Path,
+    browser_type: BrowserType,
+    *,
+    require_debug_port: bool,
+) -> bool:
+    processes = _get_browser_processes_by_profile(user_dir, browser_type)
+    terminating = []
+    for pid, _ in processes:
+        try:
+            process = psutil.Process(pid)
+            name = process.name() or ""
+            cmdline = process.cmdline() or []
+            if (
+                not _is_browser_process(name, cmdline, browser_type)
+                or not _process_uses_profile(cmdline, user_dir)
+                or (require_debug_port and _debug_port(cmdline) is None)
+            ):
+                continue
+            process.terminate()
+            terminating.append(process)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as exc:
+            logger.warning("Could not terminate browser process %s: %s", pid, exc)
+
+    for process in terminating:
+        try:
+            process.wait(timeout=3)
+        except psutil.TimeoutExpired:
+            try:
+                process.kill()
+                process.wait(timeout=3)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, psutil.TimeoutExpired) as exc:
+                logger.warning("Could not kill browser process %s: %s", process.pid, exc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as exc:
+            logger.warning("Could not wait for browser process %s: %s", process.pid, exc)
+
+    return bool(terminating)
+
+
+def _acquire_profile_file_lock(
+    user_dir: Path,
+    browser_type: BrowserType,
+    acquire_lock: Callable[[], None],
+) -> None:
+    timeout = 30
+    deadline = time.monotonic() + timeout
+    cleanup_attempted = False
+    while True:
+        try:
+            acquire_lock()
+            return
+        except OSError as exc:
+            if time.monotonic() < deadline:
+                time.sleep(0.1)
+                continue
+            if cleanup_attempted or not _terminate_profile_processes(user_dir, browser_type, require_debug_port=True):
+                raise TimeoutError(f"Timed out waiting for the browser profile lock: {user_dir}") from exc
+            cleanup_attempted = True
+            deadline = time.monotonic() + timeout
+
+
 @contextmanager
-def _profile_lock(user_dir: Path) -> Generator[None, None, None]:
+def _profile_lock(user_dir: Path, browser_type: BrowserType) -> Generator[None, None, None]:
     lock_name = hashlib.sha256(_normalized_path(user_dir).encode()).hexdigest()
     lock_path = _storage_path_solver.application_data_directory() / "profile_locks" / f"{lock_name}.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -158,29 +209,28 @@ def _profile_lock(user_dir: Path) -> Generator[None, None, None]:
             if lock_file.tell() == 0:
                 lock_file.write(b"\0")
                 lock_file.flush()
-            deadline = time.monotonic() + 30
-            while True:
-                try:
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Timed out waiting for the browser profile lock: {user_dir}")
-                    time.sleep(0.1)
-            try:
-                yield
-            finally:
+
+            def acquire_lock() -> None:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def release_lock() -> None:
                 lock_file.seek(0)
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
 
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
+            def acquire_lock() -> None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def release_lock() -> None:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+        _acquire_profile_file_lock(user_dir, browser_type, acquire_lock)
+        try:
+            yield
+        finally:
+            release_lock()
 
 
 def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0) -> None:
@@ -280,14 +330,12 @@ def _run_exe(port: int, info: BrowserInfo, options: list[str]) -> ExecutionState
 def _run_chromium(info: BrowserInfo) -> ExecutionState:
     """Run a Chromium-based browser and wait for its debugging port."""
     user_dir = _profile_directory(info)
-    with _profile_lock(user_dir):
+    with _profile_lock(user_dir, info.type):
         execution_info = _state_from_profile_process(info, user_dir)
         if execution_info is not None:
             _wait_for_port(execution_info.port)
             if not _is_browser_fetchable(execution_info.port):
-                raise RuntimeError(
-                    f"A browser is using profile {user_dir}, but its debugging endpoint is unavailable."
-                )
+                raise RuntimeError(f"A browser is using profile {user_dir}, but its debugging endpoint is unavailable.")
             save_state(execution_info)
             return execution_info
         start_port = 13456 if info.type == "chromium" else 18456
@@ -338,3 +386,13 @@ def get_execution_state(info: BrowserInfo | str | None = None) -> ExecutionState
         if _is_execution_state_process(state):
             return state
     return _run_chromium(to_browser_info())
+
+
+def restart_browser(info: BrowserInfo | str | None = None) -> ExecutionState:
+    """Terminate browsers using this profile and start a fresh browser process."""
+    browser_info = to_browser_info(info)
+    user_dir = _profile_directory(browser_info)
+    _terminate_profile_processes(user_dir, browser_info.type, require_debug_port=False)
+    if remaining := _get_browser_processes_by_profile(user_dir, browser_info.type):
+        raise RuntimeError(f"Could not stop all browser processes using profile {user_dir}: {remaining}")
+    return _run_chromium(browser_info)

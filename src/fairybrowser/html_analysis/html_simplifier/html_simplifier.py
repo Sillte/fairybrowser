@@ -50,9 +50,7 @@ class HTMLSimplifier:
         return str(parser.html)
 
     def _traverse(self, node: LexborNode) -> None:
-        if node.is_element_node and any(
-            rule.predicate(node) for rule in self._subtree_protection_rules
-        ):
+        if node.is_element_node and any(rule.predicate(node) for rule in self._subtree_protection_rules):
             return
 
         child = node.first_child

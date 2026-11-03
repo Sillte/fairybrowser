@@ -18,9 +18,7 @@ def once[T](event: Event[T]) -> Event[T]:
             alive_disposable = None
 
         alive_disposable = event.subscribe(wrapper)
-        return Disposable(
-            lambda: alive_disposable.dispose() if alive_disposable is not None else None
-        )
+        return Disposable(lambda: alive_disposable.dispose() if alive_disposable is not None else None)
 
     return Event(subscribe)
 

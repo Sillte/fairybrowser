@@ -95,12 +95,8 @@ policy = DevtoolsLogPolicy.from_any(
     fetch_stream_event_predicates=lambda event: event.event_type == "chunk",
 )
 devtools = DevtoolsService(page, "./debug", policy=policy)
-devtools.on_fetch_stream_event.subscribe(
-    lambda event: print("Fetch chunk:", event.url, event.text)
-)
-devtools.on_server_sent_event.subscribe(
-    lambda event: print("Server-Sent Event:", event.data)
-)
+devtools.on_fetch_stream_event.subscribe(lambda event: print("Fetch chunk:", event.url, event.text))
+devtools.on_server_sent_event.subscribe(lambda event: print("Server-Sent Event:", event.data))
 devtools.on_http_transaction.subscribe(
     lambda transaction: print("HTTP:", transaction.request.method, transaction.request.url)
 )
