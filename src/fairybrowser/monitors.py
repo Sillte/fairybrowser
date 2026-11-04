@@ -6,7 +6,6 @@ from pathlib import Path
 import psutil
 
 from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
-from fairybrowser.port_utils import is_port_free
 from fairybrowser.storage import StoragePathSolver
 
 logger = logging.getLogger(__name__)
@@ -45,11 +44,7 @@ def load_state(info: BrowserInfo) -> ExecutionState:
 
 
 def _is_alive(execution_state: ExecutionState) -> bool:
-    return (
-        is_pid_alive(execution_state.pid)
-        and (not is_port_free(execution_state.port))
-        and _is_browser_fetchable(execution_state.port)
-    )
+    return is_pid_alive(execution_state.pid) and _is_browser_fetchable(execution_state.port)
 
 
 def is_existent(info: BrowserInfo) -> bool:
@@ -124,13 +119,16 @@ def is_pid_alive(pid: int) -> bool:
         return True
 
 
-def _is_browser_fetchable(port: int):
-    url = f"http://127.0.0.1:{port}/json/version"
+def _is_browser_fetchable(port: int) -> bool:
+    url = f"http://localhost:{port}/json/version"
     try:
         with urllib.request.urlopen(url, timeout=1.0) as response:
-            if response.status == 200:
-                json.loads(response.read().decode())
+            if response.status != 200:
+                return False
+            version_info = json.loads(response.read().decode())
     except Exception:
         logger.debug("Failed to fetch browser debugging endpoint %s", url, exc_info=True)
         return False
-    return True
+    return isinstance(version_info, dict) and bool(
+        version_info.get("Browser") and version_info.get("webSocketDebuggerUrl")
+    )

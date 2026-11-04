@@ -46,7 +46,9 @@ def mock_browser_alive(alive_ports: list[int]):
             # 成功時のレスポンスを生成
             mock_response = MagicMock()
             mock_response.status = 200
-            mock_response.read.return_value = json.dumps({"Browser": "Mocked/1.0"}).encode()
+            mock_response.read.return_value = json.dumps(
+                {"Browser": "Mocked/1.0", "webSocketDebuggerUrl": f"ws://localhost:{port}/devtools/browser/mock"}
+            ).encode()
             mock_response.__enter__.return_value = mock_response
             return mock_response
         else:
@@ -70,6 +72,33 @@ def test_save_load_and_get_pid():
         assert loaded.pid == state.pid
     finally:
         teardown_state(name)
+
+
+def test_is_alive_uses_pid_and_cdp_endpoint_not_bind_probe(monkeypatch):
+    state = ExecutionState(name="alive", type="chrome", port=13456, pid=42)
+    monkeypatch.setattr(monitors, "is_pid_alive", lambda _pid: True)
+    monkeypatch.setattr(monitors, "_is_browser_fetchable", lambda _port: True)
+    monkeypatch.setattr(monitors, "is_port_free", lambda _port: True, raising=False)
+
+    assert monitors._is_alive(state)
+
+
+def test_browser_fetchable_queries_localhost_and_requires_cdp_fields(monkeypatch):
+    response = MagicMock()
+    response.status = 200
+    response.read.return_value = json.dumps(
+        {"Browser": "Chrome/1", "webSocketDebuggerUrl": "ws://localhost:13456/devtools/browser/mock"}
+    ).encode()
+    response.__enter__.return_value = response
+    requested = []
+    monkeypatch.setattr(
+        monitors.urllib.request,
+        "urlopen",
+        lambda url, timeout: requested.append((url, timeout)) or response,
+    )
+
+    assert monitors._is_browser_fetchable(13456)
+    assert requested == [("http://localhost:13456/json/version", 1.0)]
 
 
 def test_is_existent_migrates_legacy_chromium_state(tmp_path):
