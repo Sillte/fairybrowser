@@ -41,7 +41,6 @@ def sync_page(
         page = _find_live_page(browser, finder, state.pid) if browser is not None else None
 
         if page is None and browser is not None and browser.is_connected():
-            logger.warning("Page finder found no live page; using a page from the connected browser.")
             try:
                 page = _fallback_page(browser, logger)
             except RuntimeError:
