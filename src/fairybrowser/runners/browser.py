@@ -6,7 +6,11 @@ from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 
 from fairybrowser.models import BrowserInfo, BrowserType
 from fairybrowser.page_finder import PageFinderProtocol, create_page_finder
-from fairybrowser.runners.launcher import get_execution_state, restart_browser
+from fairybrowser.runners.launcher import (
+    find_alternate_execution_state,
+    get_execution_state,
+    restart_browser,
+)
 
 
 @contextmanager
@@ -32,36 +36,48 @@ def sync_page(
     logger = logger or logging.getLogger()
     state = get_execution_state(browser_info)
     with sync_playwright() as playwright:
-        browser = _fetch_browser(playwright, port=state.port, type=state.type)
         finder = create_page_finder() if page_finder is None else page_finder
-        for attempt in range(2):
-            page = _find_live_page(browser, finder, state.pid) if browser.is_connected() else None
-            if browser.is_connected():
-                break
-            if attempt:
-                raise RuntimeError("Browser disconnected while acquiring a page.")
-            logger.warning("Browser disconnected while acquiring a page; reconnecting to CDP.")
-            browser = _fetch_browser(playwright, port=state.port, type=state.type)
+        browser = _try_connect_browser(playwright, state.port, state.type)
+        page = _find_live_page(browser, finder, state.pid) if browser is not None else None
 
         if page is None:
-            logger.warning("No live page was found; restarting the browser for its profile.")
+            for alternate_state in find_alternate_execution_state(browser_info, state.pid):
+                alternate_browser = _try_connect_browser(playwright, alternate_state.port, alternate_state.type)
+                if alternate_browser is None:
+                    continue
+                alternate_page = _find_live_page(alternate_browser, finder, alternate_state.pid)
+                if alternate_page is None:
+                    try:
+                        alternate_page = _fallback_page(alternate_browser, logger)
+                    except Exception:
+                        continue
+                if alternate_browser.is_connected() and not alternate_page.is_closed():
+                    browser, page = alternate_browser, alternate_page
+                    break
+
+        if page is None or browser is None or not browser.is_connected():
+            logger.warning("No live browser page was found; restarting the browser for its profile.")
             state = restart_browser(browser_info)
             browser = _fetch_browser(playwright, port=state.port, type=state.type)
             page = _fallback_page(browser, logger)
-        if not browser.is_connected():
-            raise RuntimeError("Browser disconnected while acquiring a page.")
         if page.is_closed():
             raise RuntimeError("The selected page closed while it was being acquired.")
         yield page
 
 
+def _try_connect_browser(playwright: Playwright, port: int, browser_type: BrowserType) -> Browser | None:
+    try:
+        browser = _fetch_browser(playwright, port=port, type=browser_type)
+        return browser if browser.is_connected() else None
+    except Exception:
+        return None
+
+
 def _find_live_page(browser: Browser, finder: PageFinderProtocol, pid: int) -> Page | None:
     try:
         page = finder.get_page(browser, pid)
-        return None if page is not None and page.is_closed() else page
+        return page if browser.is_connected() and page is not None and not page.is_closed() else None
     except Exception:
-        if browser.is_connected():
-            raise
         return None
 
 

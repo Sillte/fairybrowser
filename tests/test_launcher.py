@@ -98,6 +98,27 @@ def test_restart_browser_terminates_all_profile_processes_before_starting(monkey
     assert termination_calls == [(user_dir, "chromium", False)]
 
 
+def test_find_alternate_execution_state_uses_same_profile_debug_port(tmp_path, monkeypatch):
+    info = BrowserInfo(name="existing")
+    user_dir = tmp_path / "existing-profile"
+    processes = [
+        _process(42, ["chrome.exe", f"--user-data-dir={user_dir}", "--remote-debugging-port=9321"]),
+        _process(43, ["chrome.exe", f"--user-data-dir={user_dir}", "--remote-debugging-port=9322"]),
+        _process(44, ["chrome.exe", f"--user-data-dir={tmp_path / 'other-profile'}", "--remote-debugging-port=9323"]),
+        _process(46, ["chrome.exe", f"--user-data-dir={user_dir}", "--remote-debugging-port=9324"]),
+        _process(45, ["chrome.exe", f"--user-data-dir={user_dir}"]),
+    ]
+    monkeypatch.setattr(launcher, "_profile_directory", lambda _info: user_dir)
+    monkeypatch.setattr(launcher.psutil, "process_iter", lambda attrs: processes)
+
+    state = launcher.find_alternate_execution_state(info, current_pid=42)
+
+    assert state == [
+        ExecutionState(name="existing", type="chromium", port=9322, pid=43),
+        ExecutionState(name="existing", type="chromium", port=9324, pid=46),
+    ]
+
+
 def test_state_from_profile_process_recovers_existing_debuggable_browser(tmp_path, monkeypatch):
     info = BrowserInfo(name="existing")
     user_dir = tmp_path / "existing-profile"

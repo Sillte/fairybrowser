@@ -73,6 +73,7 @@ def test_sync_page_restarts_browser_when_no_live_page_is_found(monkeypatch, find
     )
     monkeypatch.setattr(browser_runner, "sync_playwright", lambda: nullcontext(None))
     monkeypatch.setattr(browser_runner, "_fetch_browser", lambda *_args, **_kwargs: next(fetched_browsers))
+    monkeypatch.setattr(browser_runner, "find_alternate_execution_state", lambda *_args: [])
     monkeypatch.setattr(browser_runner, "restart_browser", lambda info: restart_calls.append(info) or new_state)
 
     with browser_runner.sync_page(page_finder=finder) as page:
@@ -80,13 +81,14 @@ def test_sync_page_restarts_browser_when_no_live_page_is_found(monkeypatch, find
     assert restart_calls == [None]
 
 
-def test_sync_page_reconnects_when_browser_disconnects_during_page_lookup(monkeypatch):
+def test_sync_page_uses_alternate_profile_process(monkeypatch):
     first_connection = {"connected": True}
     first_browser = SimpleNamespace(is_connected=lambda: first_connection["connected"])
-    second_browser = SimpleNamespace(is_connected=lambda: True)
-    disconnected_page = SimpleNamespace(is_closed=lambda: False)
+    alternate_browser = SimpleNamespace(is_connected=lambda: True)
+    failed_page = SimpleNamespace(is_closed=lambda: False)
     active_page = SimpleNamespace(is_closed=lambda: False)
-    fetched_browsers = iter([first_browser, second_browser])
+    failed_state = SimpleNamespace(port=2, type="chromium", pid=43)
+    alternate_state = SimpleNamespace(port=3, type="chromium", pid=44)
 
     class DisconnectingFinder:
         calls = 0
@@ -95,19 +97,77 @@ def test_sync_page_reconnects_when_browser_disconnects_during_page_lookup(monkey
             self.calls += 1
             if browser is first_browser:
                 first_connection["connected"] = False
-                return cast(Page, disconnected_page)
+                return cast(Page, failed_page)
             return cast(Page, active_page)
 
     finder = DisconnectingFinder()
     monkeypatch.setattr(
         browser_runner, "get_execution_state", lambda _info: SimpleNamespace(port=1, type="chromium", pid=42)
     )
+    def fetch_browser(_playwright, port, **_kwargs):
+        if port == 1:
+            return first_browser
+        if port == failed_state.port:
+            raise OSError("stale remote debugging endpoint")
+        return alternate_browser
+
     monkeypatch.setattr(browser_runner, "sync_playwright", lambda: nullcontext(None))
-    monkeypatch.setattr(browser_runner, "_fetch_browser", lambda *_args, **_kwargs: next(fetched_browsers))
+    monkeypatch.setattr(browser_runner, "_fetch_browser", fetch_browser)
+    monkeypatch.setattr(
+        browser_runner,
+        "find_alternate_execution_state",
+        lambda _info, pid: [failed_state, alternate_state] if pid == 42 else [],
+    )
+    monkeypatch.setattr(
+        browser_runner,
+        "restart_browser",
+        lambda *_args: pytest.fail("A live alternate browser should be reused"),
+    )
 
     with browser_runner.sync_page(page_finder=finder) as page:
         assert page is active_page
     assert finder.calls == 2
+
+
+def test_sync_page_restarts_when_alternate_cdp_connection_fails(monkeypatch):
+    current_browser = SimpleNamespace(is_connected=lambda: True)
+    new_page = SimpleNamespace(is_closed=lambda: False)
+    restarted_browser = SimpleNamespace(
+        is_connected=lambda: True,
+        contexts=[SimpleNamespace(pages=[], new_page=lambda: new_page)],
+    )
+    alternate_state = SimpleNamespace(port=2, type="chromium", pid=43)
+    restarted_state = SimpleNamespace(port=3, type="chromium", pid=44)
+    restart_calls = []
+
+    class EmptyFinder:
+        def get_page(self, browser: Browser, pid: int) -> Page | None:
+            return None
+
+    def fetch_browser(_playwright, port, **_kwargs):
+        if port == 1:
+            return current_browser
+        if port == alternate_state.port:
+            raise OSError("stale remote debugging endpoint")
+        return restarted_browser
+
+    monkeypatch.setattr(
+        browser_runner,
+        "get_execution_state",
+        lambda _info: SimpleNamespace(port=1, type="chromium", pid=42),
+    )
+    monkeypatch.setattr(browser_runner, "sync_playwright", lambda: nullcontext(None))
+    monkeypatch.setattr(browser_runner, "_fetch_browser", fetch_browser)
+    monkeypatch.setattr(
+        browser_runner, "find_alternate_execution_state", lambda *_args: [alternate_state]
+    )
+    monkeypatch.setattr(
+        browser_runner, "restart_browser", lambda info: restart_calls.append(info) or restarted_state
+    )
+
+    with browser_runner.sync_page(page_finder=EmptyFinder()) as page:
+        assert page is new_page
+    assert restart_calls == [None]
 
 
 def test_fallback_page_reuses_first_page_from_existing_context():

@@ -135,6 +135,19 @@ def _state_from_profile_process(info: BrowserInfo, user_dir: Path) -> ExecutionS
     return ExecutionState(name=info.name, type=info.type, port=port, pid=pid)
 
 
+def find_alternate_execution_state(
+    info: BrowserInfo | str | None,
+    current_pid: int,
+) -> list[ExecutionState]:
+    browser_info = to_browser_info(info)
+    user_dir = _profile_directory(browser_info)
+    return [
+        ExecutionState(name=browser_info.name, type=browser_info.type, port=port, pid=pid)
+        for pid, cmdline in _get_browser_processes_by_profile(user_dir, browser_info.type)
+        if pid != current_pid and (port := _debug_port(cmdline)) is not None
+    ]
+
+
 def _terminate_profile_processes(
     user_dir: Path,
     browser_type: BrowserType,
