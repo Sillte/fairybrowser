@@ -50,35 +50,33 @@ def test_linux_page_finder_returns_none_when_no_pages_exist():
 
 
 @pytest.mark.parametrize("finder_page", [None, SimpleNamespace(is_closed=lambda: True)])
-def test_sync_page_restarts_browser_when_no_live_page_is_found(monkeypatch, finder_page):
-    new_page = SimpleNamespace(is_closed=lambda: False)
-    old_browser = SimpleNamespace(is_connected=lambda: True)
-    new_browser = SimpleNamespace(
+def test_sync_page_uses_current_browser_fallback_when_finder_has_no_live_page(monkeypatch, finder_page):
+    fallback_page = SimpleNamespace(is_closed=lambda: False)
+    browser = SimpleNamespace(
         is_connected=lambda: True,
-        contexts=[SimpleNamespace(pages=[], new_page=lambda: new_page)],
+        contexts=[SimpleNamespace(pages=[fallback_page])],
     )
-    new_state = SimpleNamespace(port=2, type="chrome", pid=43)
 
     class StaticFinder:
         def get_page(self, browser: Browser, pid: int) -> Page | None:
             return cast(Page | None, finder_page)
 
     finder = StaticFinder()
-    fetched_browsers = iter([old_browser, new_browser])
-    restart_calls = []
     monkeypatch.setattr(
         browser_runner,
         "get_execution_state",
         lambda _info: SimpleNamespace(port=1, type="chrome", pid=42),
     )
     monkeypatch.setattr(browser_runner, "sync_playwright", lambda: nullcontext(None))
-    monkeypatch.setattr(browser_runner, "_fetch_browser", lambda *_args, **_kwargs: next(fetched_browsers))
-    monkeypatch.setattr(browser_runner, "find_alternate_execution_state", lambda *_args: [])
-    monkeypatch.setattr(browser_runner, "restart_browser", lambda info: restart_calls.append(info) or new_state)
+    monkeypatch.setattr(browser_runner, "_fetch_browser", lambda *_args, **_kwargs: browser)
+    monkeypatch.setattr(
+        browser_runner,
+        "restart_browser",
+        lambda *_args: pytest.fail("A connected browser should not be restarted for a page-finder miss"),
+    )
 
     with browser_runner.sync_page(page_finder=finder) as page:
-        assert page is new_page
-    assert restart_calls == [None]
+        assert page is fallback_page
 
 
 def test_sync_page_uses_alternate_profile_process(monkeypatch):
@@ -130,7 +128,7 @@ def test_sync_page_uses_alternate_profile_process(monkeypatch):
 
 
 def test_sync_page_restarts_when_alternate_cdp_connection_fails(monkeypatch):
-    current_browser = SimpleNamespace(is_connected=lambda: True)
+    current_browser = SimpleNamespace(is_connected=lambda: True, contexts=[])
     new_page = SimpleNamespace(is_closed=lambda: False)
     restarted_browser = SimpleNamespace(
         is_connected=lambda: True,

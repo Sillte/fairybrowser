@@ -40,6 +40,13 @@ def sync_page(
         browser = _try_connect_browser(playwright, state.port, state.type)
         page = _find_live_page(browser, finder, state.pid) if browser is not None else None
 
+        if page is None and browser is not None and browser.is_connected():
+            logger.warning("Page finder found no live page; using a page from the connected browser.")
+            try:
+                page = _fallback_page(browser, logger)
+            except RuntimeError:
+                logger.debug("Connected browser has no page available for fallback.", exc_info=True)
+
         if page is None:
             for alternate_state in find_alternate_execution_state(browser_info, state.pid):
                 alternate_browser = _try_connect_browser(playwright, alternate_state.port, alternate_state.type)
