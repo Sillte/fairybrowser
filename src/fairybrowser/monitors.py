@@ -21,6 +21,12 @@ def _to_json_path(name: str, type: BrowserType) -> Path:
     return _to_type_folder(type) / f"{name}.json"
 
 
+def _legacy_json_paths(info: BrowserInfo) -> list[Path]:
+    if info.type == "chrome":
+        return [_storage_path_solver.execution_states_directory() / "chromium" / f"{info.name}.json"]
+    return []
+
+
 def save_state(state: ExecutionState) -> None:
     path = _to_json_path(state.name, state.type)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -28,8 +34,14 @@ def save_state(state: ExecutionState) -> None:
 
 
 def load_state(info: BrowserInfo) -> ExecutionState:
-    path = _to_json_path(info.name, info.type)
-    return ExecutionState.model_validate_json(path.read_text())
+    path = next(
+        (candidate for candidate in [_to_json_path(info.name, info.type), *_legacy_json_paths(info)] if candidate.exists()),
+        _to_json_path(info.name, info.type),
+    )
+    state = ExecutionState.model_validate_json(path.read_text())
+    if path != _to_json_path(info.name, info.type):
+        save_state(state)
+    return state
 
 
 def _is_alive(execution_state: ExecutionState) -> bool:
@@ -41,8 +53,9 @@ def _is_alive(execution_state: ExecutionState) -> bool:
 
 
 def is_existent(info: BrowserInfo) -> bool:
-    path = _to_json_path(info.name, info.type)
-    if not path.exists():
+    paths = [_to_json_path(info.name, info.type), *_legacy_json_paths(info)]
+    path = next((candidate for candidate in paths if candidate.exists()), None)
+    if path is None:
         return False
     try:
         model = ExecutionState.model_validate_json(path.read_text())
@@ -50,23 +63,33 @@ def is_existent(info: BrowserInfo) -> bool:
         path.unlink()
         return False
     if _is_alive(model):
+        if path != paths[0]:
+            save_state(model)
         return True
-    else:
-        path.unlink()
-        return False
+    path.unlink()
+    return False
 
 
 def get_execution_infos() -> dict[BrowserInfo, ExecutionState]:
     result = {}
     for path in _storage_path_solver.execution_states_directory().glob("*/*.json"):
-        type = path.parent.stem
+        state_type = path.parent.stem
         name = path.stem
-        if not (type == "chromium" or type == "edge"):
-            raise ValueError(f"`{type=}` is not appropriate.")
-        info = BrowserInfo(name=name, type=type)
+        if state_type == "chromium":
+            browser_type = "chrome"
+        elif state_type in {"chrome", "edge"}:
+            browser_type = state_type
+        else:
+            raise ValueError(f"`{state_type=}` is not appropriate.")
+        info = BrowserInfo(name=name, type=browser_type)
         model = ExecutionState.model_validate_json(path.read_text())
         if _is_alive(model):
-            result[info] = model
+            if path.parent.stem == "chromium":
+                if info not in result:
+                    result[info] = model
+                    save_state(model)
+            else:
+                result[info] = model
         else:
             path.unlink()
     return result

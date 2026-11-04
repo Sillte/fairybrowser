@@ -5,12 +5,106 @@ import pytest
 
 from fairybrowser.models import BrowserInfo, ExecutionState
 from fairybrowser.runners import launcher
+from fairybrowser.storage import StoragePathSolver
 
 
 def _process(pid: int, cmdline: list[str]):
     return SimpleNamespace(
         info={"pid": pid, "name": "chrome.exe", "cmdline": cmdline},
     )
+
+
+def test_browser_info_uses_product_names_and_accepts_legacy_chromium_name():
+    info = BrowserInfo(type="chromium")
+
+    assert info.type == "chrome"
+    assert info.spawn == "auto"
+
+
+def test_browser_launch_options_include_requested_switches_and_run_args(tmp_path):
+    info = BrowserInfo(run_args='--start-maximized --user-agent="Fairy Browser"')
+
+    options = launcher._browser_launch_options(info, tmp_path / "profile")
+
+    assert "--allow-pre-commit-input" in options
+    assert "--disable-background-networking" in options
+    assert "--disable-features=IgnoreDuplicateNavs,Prewarm" in options
+    assert "--test-type=webdriver" in options
+    assert "--start-maximized" in options
+    assert '--user-agent=Fairy Browser' in options
+    assert options[-1] == f"--user-data-dir={tmp_path / 'profile'}"
+
+
+def test_profile_directory_uses_only_browser_type_and_name(tmp_path):
+    solver = StoragePathSolver(home_directory=tmp_path, data_home=tmp_path / "data")
+
+    assert solver.browser_profile_directory("chrome", "profile") == (
+        tmp_path / "data" / "fairybrowser" / "profiles" / "chrome" / "profile"
+    )
+
+
+def test_profile_directory_migrates_webdriver_profile_and_preserves_legacy_source(tmp_path, monkeypatch):
+    solver = StoragePathSolver(home_directory=tmp_path, data_home=tmp_path / "data")
+    legacy_dir = solver.legacy_browser_profile_directories("chrome", "profile")[4]
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "profile-data.txt").write_text("existing profile")
+    monkeypatch.setattr(launcher, "_storage_path_solver", solver)
+    monkeypatch.setattr(launcher, "_get_browser_processes_by_profile", lambda *_args: [])
+
+    user_dir = launcher._profile_directory(BrowserInfo(name="profile"))
+
+    assert (user_dir / "profile-data.txt").read_text() == "existing profile"
+    assert (legacy_dir / "profile-data.txt").read_text() == "existing profile"
+
+
+def test_profile_directory_prefers_webdriver_when_multiple_legacy_profiles_exist(tmp_path, monkeypatch):
+    solver = StoragePathSolver(home_directory=tmp_path, data_home=tmp_path / "data")
+    legacy_dirs = solver.legacy_browser_profile_directories("chrome", "profile")
+    for legacy_dir, data in zip(legacy_dirs[:2], ("webdriver", "auto")):
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "source.txt").write_text(data)
+    monkeypatch.setattr(launcher, "_storage_path_solver", solver)
+    monkeypatch.setattr(launcher, "_get_browser_processes_by_profile", lambda *_args: [])
+
+    user_dir = launcher._profile_directory(BrowserInfo(name="profile"))
+
+    assert (user_dir / "source.txt").read_text() == "webdriver"
+    assert (legacy_dirs[1] / "source.txt").read_text() == "auto"
+
+
+def test_browser_launch_options_accept_list_arguments(tmp_path):
+    info = BrowserInfo(run_args=["--start-maximized", "--incognito"])
+
+    options = launcher._browser_launch_options(info, tmp_path / "profile")
+
+    assert options[-3:] == ["--start-maximized", "--incognito", f"--user-data-dir={tmp_path / 'profile'}"]
+
+
+def test_auto_spawn_uses_webdriver_for_chrome_and_edge():
+    assert launcher._resolve_spawn(BrowserInfo(type="chrome")) == "webdriver"
+    assert launcher._resolve_spawn(BrowserInfo(type="edge")) == "webdriver"
+    assert launcher._resolve_spawn(BrowserInfo(type="chrome", spawn="webdriver")) == "webdriver"
+
+
+def test_popen_starts_installed_chrome_with_debug_port(monkeypatch, tmp_path):
+    chrome_path = tmp_path / "chrome.exe"
+    calls = []
+    monkeypatch.setattr(launcher, "_get_chrome_path", lambda: chrome_path)
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args: calls.append(args) or SimpleNamespace(pid=55))
+    monkeypatch.setattr(launcher.time, "sleep", lambda _duration: None)
+    info = BrowserInfo(type="chrome", spawn="popen")
+
+    state = launcher._run_exe(9321, info, ["--no-first-run"])
+
+    assert calls == [[str(chrome_path), "--no-first-run", "--remote-debugging-port=9321"]]
+    assert state == ExecutionState(name=info.name, type="chrome", port=9321, pid=55)
+
+
+def test_get_chrome_path_uses_installed_chrome_from_path(monkeypatch, tmp_path):
+    chrome_path = tmp_path / "chrome"
+    monkeypatch.setattr(launcher.shutil, "which", lambda executable: str(chrome_path) if executable == "chrome" else None)
+
+    assert launcher._get_chrome_path() == chrome_path
 
 
 def test_terminate_debuggable_profile_processes_only_targets_matching_profile(tmp_path, monkeypatch):
@@ -44,11 +138,11 @@ def test_terminate_debuggable_profile_processes_only_targets_matching_profile(tm
     monkeypatch.setattr(launcher.psutil, "process_iter", lambda attrs: processes)
     monkeypatch.setattr(launcher.psutil, "Process", RunningProcess)
 
-    assert launcher._terminate_profile_processes(user_dir, "chromium", require_debug_port=True)
+    assert launcher._terminate_profile_processes(user_dir, "chrome", require_debug_port=True)
     assert terminated == [42]
 
     terminated.clear()
-    assert launcher._terminate_profile_processes(user_dir, "chromium", require_debug_port=False)
+    assert launcher._terminate_profile_processes(user_dir, "chrome", require_debug_port=False)
     assert terminated == [42, 43]
 
 
@@ -72,16 +166,16 @@ def test_profile_lock_retries_after_terminating_matching_processes(tmp_path, mon
         ),
     )
 
-    launcher._acquire_profile_file_lock(tmp_path / "profile", "chromium", acquire_lock)
+    launcher._acquire_profile_file_lock(tmp_path / "profile", "chrome", acquire_lock)
 
     assert len(attempts) == 2
-    assert cleanup_calls == [(tmp_path / "profile", "chromium", True)]
+    assert cleanup_calls == [(tmp_path / "profile", "chrome", True)]
 
 
 def test_restart_browser_terminates_all_profile_processes_before_starting(monkeypatch, tmp_path):
     info = BrowserInfo(name="existing")
     user_dir = tmp_path / "existing-profile"
-    expected_state = ExecutionState(name="existing", type="chromium", port=9321, pid=42)
+    expected_state = ExecutionState(name="existing", type="chrome", port=9321, pid=42)
     termination_calls = []
     monkeypatch.setattr(launcher, "_profile_directory", lambda browser_info: user_dir)
     monkeypatch.setattr(
@@ -92,10 +186,10 @@ def test_restart_browser_terminates_all_profile_processes_before_starting(monkey
         ),
     )
     monkeypatch.setattr(launcher, "_get_browser_processes_by_profile", lambda *_args: [])
-    monkeypatch.setattr(launcher, "_run_chromium", lambda browser_info: expected_state)
+    monkeypatch.setattr(launcher, "_run_browser", lambda browser_info: expected_state)
 
     assert launcher.restart_browser(info) == expected_state
-    assert termination_calls == [(user_dir, "chromium", False)]
+    assert termination_calls == [(user_dir, "chrome", False)]
 
 
 def test_find_alternate_execution_state_uses_same_profile_debug_port(tmp_path, monkeypatch):
@@ -114,8 +208,8 @@ def test_find_alternate_execution_state_uses_same_profile_debug_port(tmp_path, m
     state = launcher.find_alternate_execution_state(info, current_pid=42)
 
     assert state == [
-        ExecutionState(name="existing", type="chromium", port=9322, pid=43),
-        ExecutionState(name="existing", type="chromium", port=9324, pid=46),
+        ExecutionState(name="existing", type="chrome", port=9322, pid=43),
+        ExecutionState(name="existing", type="chrome", port=9324, pid=46),
     ]
 
 
@@ -130,7 +224,7 @@ def test_state_from_profile_process_recovers_existing_debuggable_browser(tmp_pat
 
     state = launcher._state_from_profile_process(info, user_dir)
 
-    assert state == ExecutionState(name="existing", type="chromium", port=9321, pid=42)
+    assert state == ExecutionState(name="existing", type="chrome", port=9321, pid=42)
 
 
 def test_state_from_profile_process_raises_if_profile_browser_has_no_debug_port(tmp_path, monkeypatch):
@@ -154,7 +248,7 @@ def test_state_from_profile_process_ignores_processes_without_debug_ports(tmp_pa
 
     state = launcher._state_from_profile_process(info, user_dir)
 
-    assert state == ExecutionState(name="existing", type="chromium", port=9321, pid=43)
+    assert state == ExecutionState(name="existing", type="chrome", port=9321, pid=43)
 
 
 def test_state_from_profile_process_raises_for_multiple_debug_port_candidates(tmp_path, monkeypatch):
@@ -172,7 +266,7 @@ def test_state_from_profile_process_raises_for_multiple_debug_port_candidates(tm
 
 def test_execution_state_must_match_profile_and_port(monkeypatch, tmp_path):
     user_dir = tmp_path / "profile"
-    state = ExecutionState(name="existing", type="chromium", port=9321, pid=42)
+    state = ExecutionState(name="existing", type="chrome", port=9321, pid=42)
     process = SimpleNamespace(
         name=lambda: "chrome.exe",
         cmdline=lambda: [

@@ -1,16 +1,19 @@
 import hashlib
 import logging
 import os
+import shlex
+import shutil
 import subprocess
+import sys
+import tempfile
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
 import psutil
-from playwright.sync_api import sync_playwright
 
-from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState
+from fairybrowser.models import BrowserInfo, BrowserType, ExecutionState, SpawnType
 from fairybrowser.monitors import (
     _is_browser_fetchable,
     get_execution_infos,
@@ -28,7 +31,7 @@ _storage_path_solver = StoragePathSolver()
 
 def _browser_names(browser_type: BrowserType) -> set[str]:
     return {
-        "chromium": {
+        "chrome": {
             "chrome",
             "chrome.exe",
             "chromium",
@@ -61,7 +64,31 @@ def _normalized_path(path: str | Path) -> str:
 
 
 def _profile_directory(info: BrowserInfo) -> Path:
-    return _storage_path_solver.browser_profile_directory(info.type, info.spawn, info.name)
+    user_dir = _storage_path_solver.browser_profile_directory(info.type, info.name)
+    if user_dir.exists():
+        return user_dir
+
+    for legacy_dir in _storage_path_solver.legacy_browser_profile_directories(info.type, info.name):
+        if not legacy_dir.is_dir():
+            continue
+        if _get_browser_processes_by_profile(legacy_dir, info.type):
+            raise RuntimeError(
+                f"Close the browser using legacy profile {legacy_dir} before profile migration."
+            )
+
+        user_dir.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=user_dir.parent) as temp_dir:
+            staged_dir = Path(temp_dir) / "profile"
+            shutil.copytree(legacy_dir, staged_dir)
+            try:
+                staged_dir.rename(user_dir)
+            except OSError:
+                if not user_dir.is_dir():
+                    raise
+        logger.info("Migrated browser profile from %s to %s", legacy_dir, user_dir)
+        break
+
+    return user_dir
 
 
 def _process_uses_profile(cmdline: list[str], user_dir: Path) -> bool:
@@ -293,7 +320,7 @@ def _run_web_driver(port: int, info: BrowserInfo, options: list[str]) -> Executi
         for option in options:
             browser_options.add_argument(option)
         webdriver.Edge(options=browser_options)
-    elif info.type == "chromium":
+    elif info.type == "chrome":
         from selenium.webdriver.chrome.options import Options
 
         browser_options = Options()
@@ -320,17 +347,62 @@ def _get_edge_path() -> Path:
     raise FileNotFoundError("Microsoft Edge executable not found.")
 
 
-def _get_chromium_path() -> Path:
-    with sync_playwright() as playwright:
-        chromium_path = playwright.chromium.executable_path
-    return Path(chromium_path)
+def _get_chrome_path() -> Path:
+    for executable in ("chrome", "google-chrome", "google-chrome-stable"):
+        if path := shutil.which(executable):
+            return Path(path)
+
+    if os.name == "nt":
+        candidates = [
+            Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)"))
+            / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/Application/chrome.exe",
+        ]
+    elif sys.platform == "darwin":
+        candidates = [Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")]
+    else:
+        candidates = [Path("/opt/google/chrome/google-chrome")]
+
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise FileNotFoundError("Google Chrome executable not found.")
+
+
+def _resolve_spawn(info: BrowserInfo) -> SpawnType:
+    return "webdriver" if info.spawn == "auto" else info.spawn
+
+
+def _browser_launch_options(info: BrowserInfo, user_dir: Path) -> list[str]:
+    options = [
+        "--allow-pre-commit-input",
+        "--disable-background-networking",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-default-apps",
+        "--disable-features=IgnoreDuplicateNavs,Prewarm",
+        "--disable-infobars",
+        "--disable-popup-blocking",
+        "--disable-prompt-on-repost",
+        "--enable-logging=stderr",
+        "--no-default-browser-check",
+        "--no-first-run",
+        "--test-type=webdriver",
+    ]
+    if isinstance(info.run_args, str):
+        options.extend(shlex.split(info.run_args))
+    elif info.run_args:
+        options.extend(info.run_args)
+    options.append(f"--user-data-dir={user_dir}")
+    return options
 
 
 def _run_exe(port: int, info: BrowserInfo, options: list[str]) -> ExecutionState:
     if info.type == "edge":
         path = _get_edge_path()
-    elif info.type == "chromium":
-        path = _get_chromium_path()
+    elif info.type == "chrome":
+        path = _get_chrome_path()
     else:
         raise ValueError(f"InvalidInfo, {info=}")
 
@@ -340,8 +412,8 @@ def _run_exe(port: int, info: BrowserInfo, options: list[str]) -> ExecutionState
     return ExecutionState(name=info.name, pid=process.pid, type=info.type, port=port)
 
 
-def _run_chromium(info: BrowserInfo) -> ExecutionState:
-    """Run a Chromium-based browser and wait for its debugging port."""
+def _run_browser(info: BrowserInfo) -> ExecutionState:
+    """Launch the configured browser and wait for its debugging port."""
     user_dir = _profile_directory(info)
     with _profile_lock(user_dir, info.type):
         execution_info = _state_from_profile_process(info, user_dir)
@@ -351,22 +423,15 @@ def _run_chromium(info: BrowserInfo) -> ExecutionState:
                 raise RuntimeError(f"A browser is using profile {user_dir}, but its debugging endpoint is unavailable.")
             save_state(execution_info)
             return execution_info
-        start_port = 13456 if info.type == "chromium" else 18456
+        start_port = 13456 if info.type == "chrome" else 18456
         port = find_available_port(start=start_port)
         logger.debug("Selected browser debugging port: %s", port)
 
-        default_options = [
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-infobars",
-        ]
-        options = [
-            f"--user-data-dir={user_dir}",
-            *default_options,
-        ]
-        if info.spawn == "webdriver":
+        options = _browser_launch_options(info, user_dir)
+        spawn = _resolve_spawn(info)
+        if spawn == "webdriver":
             _run_web_driver(port, info, options)
-        elif info.spawn == "popen":
+        elif spawn == "popen":
             _run_exe(port, info, options)
         else:
             raise ValueError("Invalid `BrowserInfo.spawn`.")
@@ -393,12 +458,12 @@ def get_execution_state(info: BrowserInfo | str | None = None) -> ExecutionState
             state = load_state(browser_info)
             if _is_execution_state_for_profile(state, user_dir):
                 return state
-        return _run_chromium(browser_info)
+        return _run_browser(browser_info)
 
     for state in get_execution_infos().values():
         if _is_execution_state_process(state):
             return state
-    return _run_chromium(to_browser_info())
+    return _run_browser(to_browser_info())
 
 
 def restart_browser(info: BrowserInfo | str | None = None) -> ExecutionState:
@@ -408,4 +473,4 @@ def restart_browser(info: BrowserInfo | str | None = None) -> ExecutionState:
     _terminate_profile_processes(user_dir, browser_info.type, require_debug_port=False)
     if remaining := _get_browser_processes_by_profile(user_dir, browser_info.type):
         raise RuntimeError(f"Could not stop all browser processes using profile {user_dir}: {remaining}")
-    return _run_chromium(browser_info)
+    return _run_browser(browser_info)

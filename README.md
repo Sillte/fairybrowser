@@ -2,12 +2,12 @@
 
 **This is an individual practice project, not so refined.**
 
-A small Python project that helps start and connect to Chromium-based browsers via Playwright's CDP (Chrome DevTools Protocol). It includes utilities for finding available TCP ports, monitoring browser processes, and convenience helpers for connecting to a running browser instance.
+A small Python project that starts Google Chrome or Microsoft Edge and connects via Playwright's CDP (Chrome DevTools Protocol). It includes utilities for finding available TCP ports, monitoring browser processes, and convenience helpers for connecting to a running browser instance.
 
 
 ## Features
 
-- Start Chromium with remote debugging enabled and a user profile directory.
+- Start Chrome or Edge with remote debugging enabled and a browser-type-specific profile directory.
 - Find an available local port (with preferred candidates or a range).
 - Save and load running browser execution state (name + pid) and check if the process is still alive.
 - Helpers to obtain a Playwright `Browser` object connected over CDP.
@@ -39,9 +39,16 @@ the first page in browser context/page order, or returns no page when there are
 none. Pass a `PageFinderProtocol` implementation to `sync_page` to override the
 platform-specific default.
 
-Linux supports Chromium with both `webdriver` and `popen` launch modes.
-`webdriver` requires a Chromium installation available to Selenium; `popen`
-uses Playwright's bundled Chromium executable.
+`BrowserInfo.type` is `chrome` or `edge`. The default `auto` mode uses Selenium
+WebDriver for Chrome and Edge. `popen` directly starts the installed browser
+executable. Configure extra browser switches with
+`BrowserInfo.run_args`; fairybrowser adds the managed profile and debugging
+arguments. All launch modes share one profile per browser type. When upgrading,
+legacy spawn-specific profiles are copied into the new location, preferring the
+WebDriver profile and leaving the source untouched. Close the old browser before
+its profile is migrated. Legacy `chromium` aliases and old-layout profile/state
+migration are temporary compatibility paths; remove them after the migration
+period ends on 2026-11-08.
 
 ## Quickstart (development)
 
@@ -70,14 +77,14 @@ Note: This project currently includes only a few small unit tests under `tests/`
 
 High-level helper functions are exported from `fairybrowser.runners`.
 
-Example: start a Chromium instance and connect (programmatic)
+Example: start Chrome and connect (programmatic)
 
 ```python
 from fairybrowser import sync_page
 from fairybrowser.models import BrowserInfo
 
 info = BrowserInfo(name="my-fairy")
-# This will start Chromium (if not already running) and return a Playwright Browser connected over CDP
+# This will start Chrome (if not already running) and return a Playwright Browser connected over CDP
 with sync_page(info) as page:
     page.goto("https://example.com")
     print(page.title())

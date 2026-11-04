@@ -17,11 +17,11 @@ def isolate_execution_states(tmp_path, monkeypatch):
     monkeypatch.setattr(monitors, "_storage_path_solver", StoragePathSolver(data_home=tmp_path))
 
 
-def _state_path(name: str, type: str = "chromium"):
+def _state_path(name: str, type: str = "chrome"):
     return monitors._storage_path_solver.execution_states_directory() / type / f"{name}.json"
 
 
-def teardown_state(name: str, type: str = "chromium"):
+def teardown_state(name: str, type: str = "chrome"):
     p = _state_path(name, type)
     if p.exists():
         p.unlink()
@@ -72,13 +72,53 @@ def test_save_load_and_get_pid():
         teardown_state(name)
 
 
+def test_is_existent_migrates_legacy_chromium_state(tmp_path):
+    name = "legacy_fairy"
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    legacy_path = _state_path(name, "chromium")
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps({"name": name, "type": "chromium", "port": port, "pid": os.getpid()}))
+    info = BrowserInfo(name=name)
+    try:
+        with mock_browser_alive([port]):
+            assert monitors.is_existent(info)
+        assert monitors.load_state(info).type == "chrome"
+        assert _state_path(name, "chrome").exists()
+    finally:
+        server.close()
+        teardown_state(name, "chromium")
+        teardown_state(name, "chrome")
+
+
+def test_get_execution_infos_migrates_legacy_chromium_folder():
+    name = "legacy_info_fairy"
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    legacy_path = _state_path(name, "chromium")
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps({"name": name, "type": "chromium", "port": port, "pid": os.getpid()}))
+    try:
+        with mock_browser_alive([port]):
+            infos = monitors.get_execution_infos()
+        info = BrowserInfo(name=name)
+        assert infos[info].type == "chrome"
+        assert _state_path(name, "chrome").exists()
+    finally:
+        server.close()
+        teardown_state(name, "chromium")
+        teardown_state(name, "chrome")
+
+
 def test_is_existent_true_when_pid_alive_and_port_bound():
     name = "test_fairy_exist"
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     try:
-        info = BrowserInfo(name=name, type="chromium")
+        info = BrowserInfo(name=name, type="chrome")
         state = ExecutionState(name=info.name, type=info.type, port=port, pid=os.getpid())
         monitors.save_state(state)
         with mock_browser_alive([port]):
@@ -98,10 +138,10 @@ def test_get_execution_infos_filters():
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     try:
-        alive = ExecutionState(name=alive_name, type="chromium", port=port, pid=os.getpid())
+        alive = ExecutionState(name=alive_name, type="chrome", port=port, pid=os.getpid())
         monitors.save_state(alive)
 
-        dead = ExecutionState(name=dead_name, type="chromium", port=0, pid=999999)
+        dead = ExecutionState(name=dead_name, type="chrome", port=0, pid=999999)
         monitors.save_state(dead)
 
         with mock_browser_alive([port]):
