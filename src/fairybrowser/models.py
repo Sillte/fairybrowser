@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 BrowserType = Literal["chrome", "edge"]
 SpawnType = Literal["auto", "webdriver", "popen"]
@@ -12,11 +12,6 @@ class BrowserInfo(BaseModel, frozen=True):
     spawn: SpawnType = "auto"
 
     run_args: str | list[str] | None = None
-
-    @field_validator("type", mode="before")
-    @classmethod
-    def normalize_legacy_type(cls, value: str) -> str:
-        return "chrome" if value == "chromium" else value
 
     def __hash__(self):
         return hash((self.name, self.type))
@@ -32,8 +27,3 @@ class ExecutionState(BaseModel, frozen=True):
     type: BrowserType
     port: int
     pid: int
-
-    @field_validator("type", mode="before")
-    @classmethod
-    def normalize_legacy_type(cls, value: str) -> str:
-        return "chrome" if value == "chromium" else value

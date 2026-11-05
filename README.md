@@ -43,12 +43,7 @@ platform-specific default.
 WebDriver for Chrome and Edge. `popen` directly starts the installed browser
 executable. Configure extra browser switches with
 `BrowserInfo.run_args`; fairybrowser adds the managed profile and debugging
-arguments. All launch modes share one profile per browser type. When upgrading,
-legacy spawn-specific profiles are copied into the new location, preferring the
-WebDriver profile and leaving the source untouched. Close the old browser before
-its profile is migrated. Legacy `chromium` aliases and old-layout profile/state
-migration are temporary compatibility paths; remove them after the migration
-period ends on 2026-11-08.
+arguments. All launch modes share one profile per browser type.
 
 ## Quickstart (development)
 

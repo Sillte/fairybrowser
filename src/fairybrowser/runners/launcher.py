@@ -5,7 +5,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -64,31 +63,7 @@ def _normalized_path(path: str | Path) -> str:
 
 
 def _profile_directory(info: BrowserInfo) -> Path:
-    user_dir = _storage_path_solver.browser_profile_directory(info.type, info.name)
-    if user_dir.exists():
-        return user_dir
-
-    for legacy_dir in _storage_path_solver.legacy_browser_profile_directories(info.type, info.name):
-        if not legacy_dir.is_dir():
-            continue
-        if _get_browser_processes_by_profile(legacy_dir, info.type):
-            raise RuntimeError(
-                f"Close the browser using legacy profile {legacy_dir} before profile migration."
-            )
-
-        user_dir.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=user_dir.parent) as temp_dir:
-            staged_dir = Path(temp_dir) / "profile"
-            shutil.copytree(legacy_dir, staged_dir)
-            try:
-                staged_dir.rename(user_dir)
-            except OSError:
-                if not user_dir.is_dir():
-                    raise
-        logger.info("Migrated browser profile from %s to %s", legacy_dir, user_dir)
-        break
-
-    return user_dir
+    return _storage_path_solver.browser_profile_directory(info.type, info.name)
 
 
 def _process_uses_profile(cmdline: list[str], user_dir: Path) -> bool:

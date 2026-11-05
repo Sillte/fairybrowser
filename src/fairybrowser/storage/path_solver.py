@@ -19,18 +19,6 @@ class StoragePathSolver:
     def browser_profile_directory(self, browser_type: BrowserType, name: str) -> Path:
         return self.application_data_directory() / "profiles" / browser_type / name
 
-    def legacy_browser_profile_directories(self, browser_type: BrowserType, name: str) -> list[Path]:
-        profiles_directory = self.application_data_directory() / "profiles"
-        legacy_types: list[str] = [browser_type, "chromium"] if browser_type == "chrome" else [browser_type]
-        directories = [
-            profiles_directory / f"{legacy_type}_{mode}" / name
-            for legacy_type in legacy_types
-            for mode in ("webdriver", "auto", "direct", "popen")
-        ]
-        if browser_type == "chrome":
-            directories.append(profiles_directory / "chromium" / name)
-        return directories
-
     def invocation_plugins_directory(self) -> Path:
         return self.application_data_directory() / "invocations"
 

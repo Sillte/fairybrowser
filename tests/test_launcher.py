@@ -14,13 +14,6 @@ def _process(pid: int, cmdline: list[str]):
     )
 
 
-def test_browser_info_uses_product_names_and_accepts_legacy_chromium_name():
-    info = BrowserInfo(type="chromium")
-
-    assert info.type == "chrome"
-    assert info.spawn == "auto"
-
-
 def test_browser_launch_options_include_requested_switches_and_run_args(tmp_path):
     info = BrowserInfo(run_args='--start-maximized --user-agent="Fairy Browser"')
 
@@ -41,35 +34,6 @@ def test_profile_directory_uses_only_browser_type_and_name(tmp_path):
     assert solver.browser_profile_directory("chrome", "profile") == (
         tmp_path / "data" / "fairybrowser" / "profiles" / "chrome" / "profile"
     )
-
-
-def test_profile_directory_migrates_webdriver_profile_and_preserves_legacy_source(tmp_path, monkeypatch):
-    solver = StoragePathSolver(home_directory=tmp_path, data_home=tmp_path / "data")
-    legacy_dir = solver.legacy_browser_profile_directories("chrome", "profile")[4]
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "profile-data.txt").write_text("existing profile")
-    monkeypatch.setattr(launcher, "_storage_path_solver", solver)
-    monkeypatch.setattr(launcher, "_get_browser_processes_by_profile", lambda *_args: [])
-
-    user_dir = launcher._profile_directory(BrowserInfo(name="profile"))
-
-    assert (user_dir / "profile-data.txt").read_text() == "existing profile"
-    assert (legacy_dir / "profile-data.txt").read_text() == "existing profile"
-
-
-def test_profile_directory_prefers_webdriver_when_multiple_legacy_profiles_exist(tmp_path, monkeypatch):
-    solver = StoragePathSolver(home_directory=tmp_path, data_home=tmp_path / "data")
-    legacy_dirs = solver.legacy_browser_profile_directories("chrome", "profile")
-    for legacy_dir, data in zip(legacy_dirs[:2], ("webdriver", "auto")):
-        legacy_dir.mkdir(parents=True)
-        (legacy_dir / "source.txt").write_text(data)
-    monkeypatch.setattr(launcher, "_storage_path_solver", solver)
-    monkeypatch.setattr(launcher, "_get_browser_processes_by_profile", lambda *_args: [])
-
-    user_dir = launcher._profile_directory(BrowserInfo(name="profile"))
-
-    assert (user_dir / "source.txt").read_text() == "webdriver"
-    assert (legacy_dirs[1] / "source.txt").read_text() == "auto"
 
 
 def test_browser_launch_options_accept_list_arguments(tmp_path):
