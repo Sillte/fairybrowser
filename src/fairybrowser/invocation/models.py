@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from inspect import Parameter, signature
 from pathlib import Path
 from threading import Condition, Event, Lock
+from types import MappingProxyType
 from typing import (
     Any,
     Callable,
@@ -31,7 +32,7 @@ from fairybrowser.devtools import (
     WebsocketConnection,
 )
 from fairybrowser.models import BrowserInfo
-from fairybrowser.runners import sync_page
+from fairybrowser.runners import sync_browser
 from fairybrowser.shared.event import Disposable
 
 type ListenerEventType = HTTPTransaction | WebsocketConnection | ServerSentEvent | FetchTextStreamEvent
@@ -69,15 +70,19 @@ _NO_LISTENER_RESULT = object()
 
 @dataclass(frozen=True)
 class InvocationContext[T]:
-    """Invocation state and the signal used to indicate completion."""
+    """Invocation state, read-only per-call options, and the completion signal."""
 
     state: dict[str, Any] = field(default_factory=dict)
+    options: Mapping[str, object] = field(default_factory=dict)
     completion_event: Event = field(default_factory=Event)
     _errors: list[BaseException] = field(default_factory=list, repr=False)
     _error_lock: Lock = field(default_factory=Lock, repr=False)
     _timer_event_slot: _TimerEventSlot = field(default_factory=_TimerEventSlot, init=False, repr=False, compare=False)
     _listener_condition: Condition = field(default_factory=Condition, init=False, repr=False, compare=False)
     _listener_state: _ListenerState = field(default_factory=_ListenerState, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
 
     @property
     def timer_event(self) -> TimerEvent | None:
@@ -308,8 +313,15 @@ def _get_required_categories(listeners: Sequence[DevtoolsListener]) -> Sequence[
     return tuple({_LISTENER_TYPE_TO_CATEGORIES[type(listener)] for listener in listeners})
 
 
+type PageSelector = Callable[[Sequence[Page]], Page]
+
+
 @runtime_checkable
 class InvocationProtocol[S, T](Protocol):
+    def select(self, pages: Sequence[Page]) -> Page:
+        """Select a page from the non-empty set of pages in the managed browser."""
+        ...
+
     def start(self, input: S, page: Page, context: InvocationContext) -> None:
         """This is assured that `page` is generated"""
         ...
@@ -327,6 +339,7 @@ class InvocationCreator[S, T]:
     on_start: Callable[[S, Page, InvocationContext], None]
     _on_completed_callback: Callable[[Page, InvocationContext], T]
     listeners: Sequence[InvocationListener]
+    _select_page_callback: PageSelector | None = None
 
     @classmethod
     def from_any(
@@ -334,6 +347,7 @@ class InvocationCreator[S, T]:
         on_start: Callable[[S, Page, InvocationContext], None] | Callable[[S, Page], None],
         on_completed: Callable[[Page, InvocationContext], T] | Callable[[InvocationContext], T] | None = None,
         listeners: InvocationListeners = (),
+        select: PageSelector | None = None,
     ) -> Self:
         """Create an invocation, resolving raw listener callbacks from their first parameter annotation."""
         completion_callback = (
@@ -345,7 +359,15 @@ class InvocationCreator[S, T]:
             on_start=cls._resolve_on_start(on_start),
             _on_completed_callback=completion_callback,
             listeners=cls._resolve_listeners(listeners),
+            _select_page_callback=select,
         )
+
+    def select(self, pages: Sequence[Page]) -> Page:
+        if not pages:
+            raise ValueError("At least one page must be provided for selection")
+        if self._select_page_callback is None:
+            return pages[0]
+        return self._select_page_callback(pages)
 
     def start(self, input: S, page: Page, context: InvocationContext) -> None:
         self.on_start(input, page, context)
@@ -493,14 +515,37 @@ class InvocationExecutor[S, T]:
         return cls(invocation_creator=invocation_creator)
 
     def invoke(
-        self, input: S, configuration: InvocationConfiguration | None = None, *, output_folder: Path | None = None
+        self,
+        input: S,
+        configuration: InvocationConfiguration | None = None,
+        *,
+        options: Mapping[str, object] | None = None,
+        output_folder: Path | None = None,
     ) -> T:
         configuration = configuration or InvocationConfiguration.from_any()
-        context = InvocationContext()
+        context = InvocationContext(options={} if options is None else options)
         devtools_listeners, timer_listeners = _split_listeners(self._invocation_creator.listeners)
         policy = DevtoolsLogPolicy.from_any(categories=_get_required_categories(devtools_listeners))
 
-        with sync_page(browser_info=configuration.browser_info) as page:
+        with sync_browser(info=configuration.browser_info) as browser:
+            contexts = browser.contexts
+            pages = [page for browser_context in contexts for page in browser_context.pages if not page.is_closed()]
+            if not pages:
+                if not contexts:
+                    raise RuntimeError("The managed browser has no context for page selection.")
+                pages = [contexts[0].new_page()]
+
+            page = self._invocation_creator.select(tuple(pages))
+            if page is None or page.is_closed():
+                raise RuntimeError("The invocation must select an open page.")
+            if not any(
+                page is candidate
+                for browser_context in browser.contexts
+                for candidate in browser_context.pages
+                if not candidate.is_closed()
+            ):
+                raise RuntimeError("The invocation selected a page outside the managed browser.")
+
             devtools_service = DevtoolsService(page=page, policy=policy, save_memory=True, output_folder=output_folder)
             subscriptions = self._subscribe(devtools_service, context, devtools_listeners)
             try:

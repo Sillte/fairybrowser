@@ -13,6 +13,56 @@ from fairybrowser.runners import browser as browser_runner
 from fairybrowser.runners import launcher
 
 
+def test_sync_browser_uses_an_alternate_managed_process_when_primary_connection_fails(monkeypatch):
+    state = SimpleNamespace(port=1, type="chrome", pid=42)
+    alternate_state = SimpleNamespace(port=2, type="chrome", pid=43)
+    alternate_browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[])])
+    connection_attempts = []
+
+    monkeypatch.setattr(browser_runner, "get_execution_state", lambda _info: state)
+    monkeypatch.setattr(browser_runner, "sync_playwright", lambda: nullcontext(None))
+    monkeypatch.setattr(
+        browser_runner,
+        "_try_connect_browser",
+        lambda _playwright, port, _browser_type: connection_attempts.append(port)
+        or (alternate_browser if port == alternate_state.port else None),
+    )
+    monkeypatch.setattr(browser_runner, "find_alternate_execution_state", lambda *_args: [alternate_state])
+    monkeypatch.setattr(
+        browser_runner,
+        "restart_browser",
+        lambda *_args: pytest.fail("A live alternate browser should be reused"),
+    )
+
+    with browser_runner.sync_browser() as browser:
+        assert browser is alternate_browser
+    assert connection_attempts == [state.port, alternate_state.port]
+
+
+def test_sync_browser_restarts_when_no_connected_browser_context_is_available(monkeypatch):
+    state = SimpleNamespace(port=1, type="chrome", pid=42)
+    restarted_state = SimpleNamespace(port=2, type="chrome", pid=43)
+    connected_without_context = SimpleNamespace(contexts=[])
+    restarted_browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[])])
+    restart_calls = []
+
+    monkeypatch.setattr(browser_runner, "get_execution_state", lambda _info: state)
+    monkeypatch.setattr(browser_runner, "sync_playwright", lambda: nullcontext(None))
+    monkeypatch.setattr(
+        browser_runner,
+        "_try_connect_browser",
+        lambda _playwright, port, _browser_type: connected_without_context
+        if port == state.port
+        else restarted_browser,
+    )
+    monkeypatch.setattr(browser_runner, "find_alternate_execution_state", lambda *_args: [])
+    monkeypatch.setattr(browser_runner, "restart_browser", lambda info: restart_calls.append(info) or restarted_state)
+
+    with browser_runner.sync_browser() as browser:
+        assert browser is restarted_browser
+    assert restart_calls == [None]
+
+
 def test_windows_page_finder_selects_page_matching_visible_browser_window():
     selected_page = SimpleNamespace(url="https://example.com", title=lambda: "Example")
     context = SimpleNamespace(

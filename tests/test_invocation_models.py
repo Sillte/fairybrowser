@@ -2,6 +2,8 @@ import time
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from threading import Event, Thread, get_ident
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,12 +33,26 @@ from fairybrowser.models import BrowserInfo
 from fairybrowser.shared.event import Disposable
 
 
+def _browser_with_pages(*pages: Page):
+    return SimpleNamespace(contexts=[SimpleNamespace(pages=list(pages))])
+
+
 def test_invocation_context_completion_sets_completion_event():
     context = InvocationContext()
 
     context.complete()
 
     assert context.completion_event.is_set()
+
+
+def test_invocation_context_copies_and_exposes_read_only_options():
+    options = {"mode": "strict"}
+    context = InvocationContext(options=options)
+    options["mode"] = "changed"
+
+    assert context.options["mode"] == "strict"
+    with pytest.raises(TypeError):
+        cast(dict[str, object], context.options)["mode"] = "changed"
 
 
 def test_invocation_context_keeps_the_last_completed_listener_result():
@@ -117,6 +133,8 @@ def test_invocation_context_failure_wraps_listener_event():
 @pytest.mark.parametrize("outcome", ["success", "start", "timeout"])
 def test_invocation_executor_cleans_up(monkeypatch: pytest.MonkeyPatch, outcome: str):
     page = MagicMock(spec=Page)
+    page.is_closed.return_value = False
+    browser = _browser_with_pages(page)
     disposed: list[bool] = []
     services = []
 
@@ -132,13 +150,16 @@ def test_invocation_executor_cleans_up(monkeypatch: pytest.MonkeyPatch, outcome:
             self.terminated = True
 
     @contextmanager
-    def fake_sync_page(**_kwargs):
-        yield page
+    def fake_sync_browser(**_kwargs):
+        yield browser
 
-    monkeypatch.setattr("fairybrowser.invocation.models.sync_page", fake_sync_page)
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_browser", fake_sync_browser)
     monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
+    options = {"mode": "strict"}
+    received_options = []
 
     def start(_input, _page, context):
+        received_options.append(context.options["mode"])
         if outcome == "start":
             raise RuntimeError("start failed")
         if outcome == "success":
@@ -156,17 +177,125 @@ def test_invocation_executor_cleans_up(monkeypatch: pytest.MonkeyPatch, outcome:
     )
 
     if outcome == "success":
-        assert executor.invoke(None, configuration=InvocationConfiguration(timeout=0)) is None
+        assert executor.invoke(None, configuration=InvocationConfiguration(timeout=0), options=options) is None
     else:
         with pytest.raises(RuntimeError if outcome == "start" else TimeoutError):
-            executor.invoke(None, configuration=InvocationConfiguration(timeout=0))
+            executor.invoke(None, configuration=InvocationConfiguration(timeout=0), options=options)
 
+    assert received_options == ["strict"]
     assert disposed == [True]
     assert services[0].terminated
 
 
+def test_invocation_executor_selects_page_across_contexts_before_start(monkeypatch: pytest.MonkeyPatch):
+    first_page = MagicMock(spec=Page)
+    second_page = MagicMock(spec=Page)
+    created_page = MagicMock(spec=Page)
+    for page in (first_page, second_page, created_page):
+        page.is_closed.return_value = False
+    first_context = SimpleNamespace(pages=[first_page])
+    second_context = SimpleNamespace(pages=[second_page])
+    second_page.context = second_context
+
+    def create_page():
+        second_context.pages.append(created_page)
+        return created_page
+
+    second_context.new_page = create_page
+    browser = SimpleNamespace(contexts=[first_context, second_context])
+    selected_candidates = []
+    services = []
+
+    class FakeService:
+        def __init__(self, **kwargs):
+            self.page = kwargs["page"]
+            self.terminated = False
+            services.append(self)
+
+        def start(self):
+            pass
+
+        def terminate(self):
+            self.terminated = True
+
+    @contextmanager
+    def fake_sync_browser(**_kwargs):
+        yield browser
+
+    def select_page(pages):
+        selected_candidates.extend(pages)
+        return pages[-1].context.new_page()
+
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_browser", fake_sync_browser)
+    monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
+
+    invocation = InvocationCreator.from_any(
+        on_start=lambda _input, _page, context: context.complete(),
+        on_completed=lambda _page, _context: "completed",
+        select=select_page,
+    )
+    result = InvocationExecutor.from_any(invocation).invoke(
+        None, configuration=InvocationConfiguration(timeout=0)
+    )
+
+    assert selected_candidates == [first_page, second_page]
+    assert result == "completed"
+    assert services[0].page is created_page
+    assert services[0].terminated
+
+
+def test_invocation_executor_seeds_a_page_only_when_all_contexts_are_empty(monkeypatch: pytest.MonkeyPatch):
+    first_context = SimpleNamespace(pages=[])
+    second_context = SimpleNamespace(pages=[])
+    seeded_pages = []
+
+    def create_seed_page():
+        page = MagicMock(spec=Page)
+        page.is_closed.return_value = False
+        first_context.pages.append(page)
+        seeded_pages.append(page)
+        return page
+
+    first_context.new_page = create_seed_page
+    browser = SimpleNamespace(contexts=[first_context, second_context])
+    received_pages = []
+
+    class FakeService:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def terminate(self):
+            pass
+
+    @contextmanager
+    def fake_sync_browser(**_kwargs):
+        yield browser
+
+    def select_page(pages):
+        received_pages.extend(pages)
+        return pages[0]
+
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_browser", fake_sync_browser)
+    monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
+
+    invocation = InvocationCreator.from_any(
+        on_start=lambda _input, _page, context: context.complete(),
+        select=select_page,
+    )
+    InvocationExecutor.from_any(invocation).invoke(None, configuration=InvocationConfiguration(timeout=0))
+
+    assert received_pages == seeded_pages
+    assert len(first_context.pages) == 1
+    assert second_context.pages == []
+
+
 def test_invocation_executor_propagates_listener_error_and_cleans_up(monkeypatch: pytest.MonkeyPatch):
     page = MagicMock(spec=Page)
+    page.is_closed.return_value = False
+    browser = _browser_with_pages(page)
     disposed: list[bool] = []
     services = []
 
@@ -199,10 +328,10 @@ def test_invocation_executor_propagates_listener_error_and_cleans_up(monkeypatch
             self.terminated = True
 
     @contextmanager
-    def fake_sync_page(**_kwargs):
-        yield page
+    def fake_sync_browser(**_kwargs):
+        yield browser
 
-    monkeypatch.setattr("fairybrowser.invocation.models.sync_page", fake_sync_page)
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_browser", fake_sync_browser)
     monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
 
     def failing_listener(_event):
@@ -223,7 +352,9 @@ def test_invocation_executor_propagates_listener_error_and_cleans_up(monkeypatch
 
 def test_timer_listener_runs_on_page_thread_and_updates_context(monkeypatch: pytest.MonkeyPatch):
     page = MagicMock(spec=Page)
+    page.is_closed.return_value = False
     page.wait_for_timeout.side_effect = lambda milliseconds: time.sleep(milliseconds / 1000)
+    browser = _browser_with_pages(page)
     thread_id = get_ident()
 
     class FakeService:
@@ -237,10 +368,10 @@ def test_timer_listener_runs_on_page_thread_and_updates_context(monkeypatch: pyt
             self.terminated = True
 
     @contextmanager
-    def fake_sync_page(**_kwargs):
-        yield page
+    def fake_sync_browser(**_kwargs):
+        yield browser
 
-    monkeypatch.setattr("fairybrowser.invocation.models.sync_page", fake_sync_page)
+    monkeypatch.setattr("fairybrowser.invocation.models.sync_browser", fake_sync_browser)
     monkeypatch.setattr("fairybrowser.invocation.models.DevtoolsService", FakeService)
     received = []
 
@@ -424,3 +555,24 @@ def test_invocation_creator_resolves_forward_referenced_event_annotation():
     )
 
     assert isinstance(creator.listeners[0], HTTPTransactionListener)
+
+
+def test_invocation_creator_selects_the_first_page_by_default():
+    first_page = MagicMock(spec=Page)
+    second_page = MagicMock(spec=Page)
+    creator = InvocationCreator.from_any(on_start=lambda _input, _page: None)
+
+    assert creator.select([first_page, second_page]) is first_page
+
+
+def test_invocation_creator_uses_custom_page_selector_and_requires_candidates():
+    first_page = MagicMock(spec=Page)
+    second_page = MagicMock(spec=Page)
+    creator = InvocationCreator.from_any(
+        on_start=lambda _input, _page: None,
+        select=lambda pages: pages[-1],
+    )
+
+    assert creator.select([first_page, second_page]) is second_page
+    with pytest.raises(ValueError, match="At least one page"):
+        creator.select([])

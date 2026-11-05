@@ -17,11 +17,25 @@ from fairybrowser.runners.launcher import (
 def sync_browser(
     info: BrowserInfo | str | None = None, *, logger: logging.Logger | None = None
 ) -> Generator[Browser, None, None]:
-    """Get a Playwright Browser connected to the managed browser."""
-    _ = logger or logging.getLogger()
+    """Get a connected managed Browser, retrying alternate and restarted processes."""
+    logger = logger or logging.getLogger()
     state = get_execution_state(info)
     with sync_playwright() as playwright:
-        browser = _fetch_browser(playwright, state.port, state.type)
+        browser = _try_connect_browser(playwright, state.port, state.type)
+        if browser is None or not browser.contexts:
+            for alternate_state in find_alternate_execution_state(info, state.pid):
+                alternate_browser = _try_connect_browser(playwright, alternate_state.port, alternate_state.type)
+                if alternate_browser is not None and alternate_browser.contexts:
+                    browser = alternate_browser
+                    break
+
+        if browser is None or not browser.contexts:
+            logger.warning("No managed browser context is available; restarting the browser for its profile.")
+            state = restart_browser(info)
+            browser = _try_connect_browser(playwright, state.port, state.type)
+
+        if browser is None or not browser.contexts:
+            raise RuntimeError("Could not connect to a managed browser with an available context.")
         yield browser
 
 

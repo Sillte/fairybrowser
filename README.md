@@ -141,6 +141,10 @@ However, some tasks require the aggregation of various messages generated during
 
 Invocation is designed to address this need: collecting and processing the resulting messages to produce the desired output.
 
+Before execution, Invocation gathers live pages from the managed browser and calls `select(pages)`; the selector receives a non-empty sequence and returns the page used by `start`. If all browser contexts have no live pages, `InvocationExecutor` creates an initial page in the first context. `InvocationCreator.from_any` selects the first page by default; pass a `select` callback for custom selection. The selected page is then attached to DevTools before `start` runs.
+
+Pass per-call options to `InvocationExecutor.invoke` or `InvocationPluginRegistry.invoke` with `options={...}`. The options are copied into a read-only `InvocationContext.options` mapping for `start`, listeners, and `on_completed`. They are not currently passed to `select`.
+
 ### Invocation plugins
 
 > **Developers only:** Plugin installation and verification are local development utilities, not features to publicize or expose to unknown users. Plugins execute Python code with the current process's permissions and are not sandboxed; use only plugins you trust.

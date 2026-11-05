@@ -10,5 +10,9 @@ class InvalidInvocationPluginError(InvocationPluginError):
     """Raised when a plugin does not implement the invocation plugin contract."""
 
 
+class DuplicateInvocationPluginNameError(InvalidInvocationPluginError):
+    """Raised when multiple plugin files declare the same name."""
+
+
 class InvocationPluginLoadError(InvocationPluginError):
     """Raised when loading a plugin module or creating its invocation fails."""
