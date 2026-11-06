@@ -20,7 +20,10 @@ class StoragePathSolver:
         return self.application_data_directory() / "profiles" / browser_type / name
 
     def invocation_plugins_directory(self) -> Path:
-        return self.application_data_directory() / "invocations"
+        return self.application_data_directory() / "plugins" / "invocations"
+
+    def reader_plugins_directory(self) -> Path:
+        return self.application_data_directory() / "plugins" / "readers"
 
     def _default_data_home(self) -> Path:
         if platform.system() == "Windows":
