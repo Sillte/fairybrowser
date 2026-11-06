@@ -139,6 +139,25 @@ def test_reader_plugin_registry_installs_and_checks_plugins(tmp_path: Path):
         registry.install(_valid_plugin_source())
 
 
+def test_reader_plugin_registry_makes_example(tmp_path: Path):
+    plugin_directory = tmp_path / "registry"
+    plugin_directory.mkdir()
+    (plugin_directory / "example.py").write_text("old content", encoding="utf-8")
+    registry = ReaderPluginRegistry(plugin_directory)
+
+    example_path = registry.make_example()
+    reader = registry.load("example")
+
+    class FakePage:
+        def title(self) -> str:
+            return "Example page"
+
+    page = cast(Page, FakePage())
+    assert example_path == plugin_directory / "example.py"
+    assert reader.select([page]) is page
+    assert reader.read(page) == "Example page"
+
+
 def test_reader_plugin_registry_reads_selected_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     source = '''
 class SamplePlugin:

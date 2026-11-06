@@ -25,6 +25,29 @@ class ReaderPluginRegistry:
         """List installed plugin names without importing their code."""
         return self._loader.list_plugins()
 
+    def make_example(self) -> Path:
+        """Write a simple reader plugin example to the plugin directory."""
+        self.plugin_directory.mkdir(parents=True, exist_ok=True)
+        example_path = self.plugin_directory / "example.py"
+        example_path.write_text(
+            '''class ExampleReaderPlugin:
+    name = "example"
+
+    def create(self):
+        return ExampleReader()
+
+
+class ExampleReader:
+    def select(self, pages):
+        return pages[0] if pages else None
+
+    def read(self, page):
+        return page.title()
+''',
+            encoding="utf-8",
+        )
+        return example_path
+
     def load(self, name: str) -> ReaderProtocol:
         """Load a trusted local plugin and create its reader."""
         return self._loader.load(name)

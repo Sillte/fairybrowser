@@ -25,6 +25,27 @@ class InvocationPluginRegistry:
         """List installed plugin names without importing their code."""
         return self._loader.list_plugins()
 
+    def make_example(self) -> Path:
+        """Write a simple invocation plugin example to the plugin directory."""
+        self.plugin_directory.mkdir(parents=True, exist_ok=True)
+        example_path = self.plugin_directory / "example.py"
+        example_path.write_text(
+            '''from fairybrowser.invocation import InvocationCreator
+
+
+class ExampleInvocationPlugin:
+    name = "example"
+
+    def create(self):
+        return InvocationCreator.from_any(
+            on_start=lambda _input, _page, context: context.complete(),
+            on_completed=lambda _page, _context: "Example invocation completed",
+        )
+''',
+            encoding="utf-8",
+        )
+        return example_path
+
     def load(self, name: str) -> InvocationProtocol[Any, Any]:
         """Load a trusted local plugin and create its Invocation."""
         return self._loader.load(name)

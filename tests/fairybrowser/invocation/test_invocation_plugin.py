@@ -199,6 +199,23 @@ def test_plugin_registry_installs_plugin_file(tmp_path: Path, as_string: bool):
     assert callable(registry.load("declared-id").on_completed)
 
 
+def test_plugin_registry_makes_example(tmp_path: Path):
+    plugin_directory = tmp_path / "registry"
+    plugin_directory.mkdir()
+    (plugin_directory / "example.py").write_text("old content", encoding="utf-8")
+    registry = InvocationPluginRegistry(plugin_directory)
+
+    example_path = registry.make_example()
+    invocation = registry.load("example")
+    context = InvocationContext()
+
+    invocation.start("input", cast(Page, object()), context)
+
+    assert example_path == plugin_directory / "example.py"
+    assert context.completion_event.is_set()
+    assert invocation.on_completed(cast(Page, object()), context) == "Example invocation completed"
+
+
 def test_plugin_registry_installs_source_and_checks_duplicate_names(tmp_path: Path):
     registry = InvocationPluginRegistry(tmp_path / "registry")
     source = _valid_plugin_source("source", "inline")
