@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from inspect import signature
@@ -103,12 +104,11 @@ class PageReaderCreator:
         return self._read_callback(page, context)
 
 
-@runtime_checkable
-class PageReaderPluginProtocol(Protocol):
-    """Contract for a named plugin that creates a reader."""
+class PageReaderPlugin(ABC):
+    """Abstract entry point for a named page reader plugin."""
 
     name: ClassVar[str]
 
+    @abstractmethod
     def create(self) -> PageReaderProtocol:
         """Create the reader implementation for this plugin."""
-        ...

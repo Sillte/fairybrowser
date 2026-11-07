@@ -20,9 +20,10 @@ from fairybrowser.plugins.invocation import (
 def _valid_plugin_source(result: str, name: str = "sample") -> str:
     return f'''
 from fairybrowser.invocation import FetchTextStreamEventListener, InvocationCreator
+from fairybrowser.plugins.invocation import InvocationPlugin
 
 
-class SamplePlugin:
+class SamplePlugin(InvocationPlugin):
     name = {name!r}
 
     def create(self):
@@ -40,9 +41,10 @@ def test_plugin_registry_lists_literal_names_without_importing_plugin_code(tmp_p
     plugin_file.write_text(
         f'''
 from pathlib import Path
+from fairybrowser.plugins.invocation import InvocationPlugin
 Path({str(marker)!r}).write_text("imported")
 
-class NamedPlugin:
+class NamedPlugin(InvocationPlugin):
     name = "stable-id"
     def create(self):
         raise RuntimeError("not called during listing")
@@ -67,11 +69,81 @@ def test_plugin_registry_loads_structural_protocol_plugin(tmp_path: Path):
     assert callable(invocation.start)
 
 
+def test_plugin_registry_discovers_aliased_generic_abc_bases(tmp_path: Path):
+    (tmp_path / "aliased.py").write_text(
+        '''
+from fairybrowser.invocation import InvocationCreator
+from fairybrowser.plugins.invocation import InvocationPlugin as InvocationBase
+
+class AliasedPlugin(InvocationBase[str, str]):
+    name = "aliased"
+    def create(self):
+        return InvocationCreator.from_any(
+            on_start=lambda *_args: None,
+            on_completed=lambda _context: "aliased",
+        )
+''',
+        encoding="utf-8",
+    )
+    registry = InvocationPluginRegistry(tmp_path)
+
+    assert registry.list_plugins() == ("aliased",)
+    assert registry.load("aliased").on_completed(cast(Page, object()), InvocationContext()) == "aliased"
+
+
+@pytest.mark.parametrize(
+    "import_module",
+    (
+        "fairybrowser.plugins",
+        "fairybrowser.plugins.invocation",
+        "fairybrowser.plugins.invocation.models",
+    ),
+)
+def test_plugin_registry_accepts_supported_base_import_modules(tmp_path: Path, import_module: str):
+    (tmp_path / "imported.py").write_text(
+        f'''
+from fairybrowser.invocation import InvocationCreator
+from {import_module} import InvocationPlugin as PluginBase
+
+class ImportedPlugin(PluginBase):
+    name = "imported"
+    def create(self):
+        return InvocationCreator.from_any(
+            on_start=lambda *_args: None,
+            on_completed=lambda _context: "imported",
+        )
+''',
+        encoding="utf-8",
+    )
+    registry = InvocationPluginRegistry(tmp_path)
+
+    assert registry.list_plugins() == ("imported",)
+    assert registry.load("imported").on_completed(cast(Page, object()), InvocationContext()) == "imported"
+
+
+def test_plugin_registry_ignores_unsupported_base_import_module(tmp_path: Path):
+    (tmp_path / "unsupported.py").write_text(
+        '''
+from fairybrowser import InvocationPlugin
+
+class UnsupportedPlugin(InvocationPlugin):
+    name = "unsupported"
+''',
+        encoding="utf-8",
+    )
+    registry = InvocationPluginRegistry(tmp_path)
+
+    assert registry.list_plugins() == ()
+    with pytest.raises(InvocationPluginNotFoundError):
+        registry.load("unsupported")
+
+
 def test_plugin_registry_fetches_source_without_executing_it(tmp_path: Path):
     source = '''
+from fairybrowser.plugins.invocation import InvocationPlugin
 raise RuntimeError("fetch must not execute plugin code")
 
-class SourcePlugin:
+class SourcePlugin(InvocationPlugin):
     name = "source"
 '''
     plugin_directory = tmp_path / "registry"
@@ -101,9 +173,10 @@ def test_plugin_registry_rejects_duplicate_names_before_import(tmp_path: Path):
         (tmp_path / filename).write_text(
             f'''
 from pathlib import Path
+from fairybrowser.plugins.invocation import InvocationPlugin
 Path({str(marker)!r}).write_text("imported")
 
-class Plugin:
+class Plugin(InvocationPlugin):
     name = "duplicate"
     def create(self):
         return None
@@ -117,29 +190,35 @@ class Plugin:
     assert not marker.exists()
 
 
-def test_plugin_registry_rejects_multiple_named_classes_in_one_file(tmp_path: Path):
-    (tmp_path / "ambiguous.py").write_text(
+def test_plugin_registry_lists_and_loads_multiple_classes_from_one_file(tmp_path: Path):
+    (tmp_path / "bundle.py").write_text(
         '''
-class FirstPlugin:
-    name = "first"
-    def create(self): return None
+from fairybrowser.invocation import InvocationCreator
+from fairybrowser.plugins.invocation import InvocationPlugin
 
-class SecondPlugin:
+class FirstPlugin(InvocationPlugin):
+    name = "first"
+    def create(self): return InvocationCreator.from_any(on_start=lambda *_args: None, on_completed=lambda _context: "first")
+
+class SecondPlugin(InvocationPlugin):
     name = "second"
-    def create(self): return None
+    def create(self): return InvocationCreator.from_any(on_start=lambda *_args: None, on_completed=lambda _context: "second")
 ''',
         encoding="utf-8",
     )
     registry = InvocationPluginRegistry(tmp_path)
 
-    with pytest.raises(InvalidInvocationPluginError, match="exactly one"):
-        registry.list_plugins()
+    assert registry.list_plugins() == ("first", "second")
+    assert registry.load("first").on_completed(cast(Page, object()), InvocationContext()) == "first"
+    assert registry.load("second").on_completed(cast(Page, object()), InvocationContext()) == "second"
 
 
 def test_plugin_registry_rejects_dynamic_plugin_name(tmp_path: Path):
     (tmp_path / "dynamic.py").write_text(
         '''
-class Plugin:
+from fairybrowser.plugins.invocation import InvocationPlugin
+
+class Plugin(InvocationPlugin):
     name = "dynamic".upper()
     def create(self): return None
 ''',
@@ -154,7 +233,9 @@ class Plugin:
 def test_plugin_registry_rejects_missing_and_invalid_plugins(tmp_path: Path):
     (tmp_path / "invalid.py").write_text(
         '''
-class Plugin:
+from fairybrowser.plugins.invocation import InvocationPlugin
+
+class Plugin(InvocationPlugin):
     name = "invalid"
     def create_invocation(self): return None
 ''',
@@ -166,14 +247,16 @@ class Plugin:
         registry.load("../invalid")
     with pytest.raises(InvocationPluginNotFoundError):
         registry.load("missing")
-    with pytest.raises(InvalidInvocationPluginError, match="callable create"):
+    with pytest.raises(InvalidInvocationPluginError, match="directly inherit"):
         registry.load("invalid")
 
 
 def test_plugin_registry_rejects_invalid_invocation_result(tmp_path: Path):
     (tmp_path / "invalid-result.py").write_text(
         '''
-class Plugin:
+from fairybrowser.plugins.invocation import InvocationPlugin
+
+class Plugin(InvocationPlugin):
     name = "bad-result"
     def create(self): return object()
 ''',
@@ -188,7 +271,9 @@ class Plugin:
 def test_plugin_registry_wraps_create_errors(tmp_path: Path):
     (tmp_path / "broken.py").write_text(
         '''
-class Plugin:
+from fairybrowser.plugins.invocation import InvocationPlugin
+
+class Plugin(InvocationPlugin):
     name = "broken"
     def create(self): raise RuntimeError("plugin failure")
 ''',
@@ -222,6 +307,29 @@ def test_plugin_registry_installs_source_string_ending_in_py(tmp_path: Path):
 
     assert installed == tmp_path / "registry" / "inline.py"
     assert registry.fetch("inline") == source
+
+
+def test_plugin_registry_installs_multiple_plugins_from_one_source(tmp_path: Path):
+    source = '''
+from fairybrowser.invocation import InvocationCreator
+from fairybrowser.plugins.invocation import InvocationPlugin
+
+class FirstPlugin(InvocationPlugin):
+    name = "first"
+    def create(self): return InvocationCreator.from_any(on_start=lambda *_args: None, on_completed=lambda _context: "first")
+
+class SecondPlugin(InvocationPlugin):
+    name = "second"
+    def create(self): return InvocationCreator.from_any(on_start=lambda *_args: None, on_completed=lambda _context: "second")
+'''
+    registry = InvocationPluginRegistry(tmp_path / "registry")
+
+    with pytest.raises(ValueError, match="filename is required"):
+        registry.install(source)
+    installed = registry.install(source, filename="bundle.py")
+
+    assert installed == tmp_path / "registry" / "bundle.py"
+    assert registry.list_plugins() == ("first", "second")
 
 
 def test_plugin_registry_installs_example(tmp_path: Path):
@@ -286,8 +394,9 @@ def test_plugin_registry_invokes_loaded_plugin(tmp_path: Path, monkeypatch: pyte
     (tmp_path / "sample.py").write_text(
         '''
 from fairybrowser.invocation import InvocationCreator
+from fairybrowser.plugins.invocation import InvocationPlugin
 
-class SamplePlugin:
+class SamplePlugin(InvocationPlugin):
     name = "sample"
     def create(self):
         def start(input, _page, context):

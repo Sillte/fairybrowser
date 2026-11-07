@@ -1,7 +1,8 @@
 from fairybrowser.invocation import InvocationCreator
+from fairybrowser.plugins import InvocationPlugin
 
 
-class ExampleInvocationPlugin:
+class ExampleInvocationPlugin(InvocationPlugin):
     name = "example"
 
     def create(self):

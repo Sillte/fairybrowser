@@ -1,7 +1,8 @@
+from fairybrowser.plugins import PageReaderPlugin
 from fairybrowser.plugins.readers import PageReaderCreator
 
 
-class ExamplePageReaderPlugin:
+class ExamplePageReaderPlugin(PageReaderPlugin):
     name = "example"
 
     def create(self):

@@ -6,7 +6,7 @@ from fairybrowser.plugins.invocation.exceptions import (
     InvocationPluginNotFoundError,
 )
 from fairybrowser.plugins.invocation.loader import InvocationPluginLoader
-from fairybrowser.plugins.invocation.models import InvocationPluginProtocol
+from fairybrowser.plugins.invocation.models import InvocationPlugin
 from fairybrowser.plugins.invocation.registry import InvocationPluginRegistry
 
 __all__ = [
@@ -16,6 +16,6 @@ __all__ = [
     "InvocationPluginLoadError",
     "InvocationPluginLoader",
     "InvocationPluginNotFoundError",
-    "InvocationPluginProtocol",
+    "InvocationPlugin",
     "InvocationPluginRegistry",
 ]

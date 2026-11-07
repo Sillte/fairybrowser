@@ -12,7 +12,7 @@ from fairybrowser.plugins.readers.loader import PageReaderPluginLoader
 from fairybrowser.plugins.readers.models import (
     PageReaderContext,
     PageReaderCreator,
-    PageReaderPluginProtocol,
+    PageReaderPlugin,
     PageReaderProtocol,
 )
 from fairybrowser.plugins.readers.registry import PageReaderPluginRegistry
@@ -27,7 +27,7 @@ __all__ = [
     "PageReaderPluginLoadError",
     "PageReaderPluginLoader",
     "PageReaderPluginNotFoundError",
-    "PageReaderPluginProtocol",
+    "PageReaderPlugin",
     "PageReaderPluginRegistry",
     "PageReaderProtocol",
 ]

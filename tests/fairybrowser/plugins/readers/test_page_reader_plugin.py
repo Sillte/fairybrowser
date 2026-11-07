@@ -24,10 +24,10 @@ from fairybrowser.storage import StoragePathSolver
 
 def _valid_plugin_source(name: str = "sample") -> str:
     return f"""
-from fairybrowser.plugins.readers import PageReaderCreator
+from fairybrowser.plugins.readers import PageReaderCreator, PageReaderPlugin
 
 
-class SamplePlugin:
+class SamplePlugin(PageReaderPlugin):
     name = {name!r}
 
     def create(self):
@@ -40,9 +40,10 @@ def test_reader_plugin_loader_lists_names_without_importing_plugin_code(tmp_path
     (tmp_path / "reader.py").write_text(
         f"""
 from pathlib import Path
+from fairybrowser.plugins.readers import PageReaderPlugin
 Path({str(marker)!r}).write_text("imported")
 
-class PageReaderPlugin:
+class SampleReader(PageReaderPlugin):
     name = "sample"
     def create(self):
         raise RuntimeError("not called during listing")
@@ -68,11 +69,88 @@ def test_reader_plugin_loader_loads_named_reader(tmp_path: Path):
     assert reader.read(first_page, context) == "read"
 
 
+@pytest.mark.parametrize(
+    "import_module",
+    (
+        "fairybrowser.plugins",
+        "fairybrowser.plugins.readers",
+        "fairybrowser.plugins.readers.models",
+    ),
+)
+def test_reader_plugin_loader_accepts_supported_base_import_modules(tmp_path: Path, import_module: str):
+    (tmp_path / "imported.py").write_text(
+        f'''
+from fairybrowser.plugins.readers import PageReaderCreator
+from {import_module} import PageReaderPlugin as PluginBase
+
+class ImportedPlugin(PluginBase):
+    name = "imported"
+    def create(self): return PageReaderCreator.from_any(read=lambda _page: "imported")
+''',
+        encoding="utf-8",
+    )
+    registry = PageReaderPluginRegistry(tmp_path)
+
+    assert registry.list_plugins() == ("imported",)
+    assert registry.load("imported").read(cast(Page, object()), PageReaderContext()) == "imported"
+
+
+def test_reader_plugin_loader_ignores_unsupported_base_import_module(tmp_path: Path):
+    (tmp_path / "unsupported.py").write_text(
+        '''
+from fairybrowser import PageReaderPlugin
+
+class UnsupportedPlugin(PageReaderPlugin):
+    name = "unsupported"
+''',
+        encoding="utf-8",
+    )
+    registry = PageReaderPluginRegistry(tmp_path)
+
+    assert registry.list_plugins() == ()
+    with pytest.raises(PageReaderPluginNotFoundError):
+        registry.load("unsupported")
+
+
+def test_one_module_can_contain_multiple_plugin_kinds_and_entries(tmp_path: Path):
+    from fairybrowser.invocation import InvocationContext
+    from fairybrowser.plugins.invocation import InvocationPluginRegistry
+
+    (tmp_path / "bundle.py").write_text(
+        """
+from fairybrowser.invocation import InvocationCreator
+from fairybrowser.plugins.invocation import InvocationPlugin
+from fairybrowser.plugins.readers import PageReaderCreator, PageReaderPlugin
+
+class FirstReader(PageReaderPlugin):
+    name = "shared"
+    def create(self): return PageReaderCreator.from_any(read=lambda _page: "reader")
+
+class SecondReader(PageReaderPlugin):
+    name = "reader-two"
+    def create(self): return PageReaderCreator.from_any(read=lambda _page: "reader two")
+
+class SharedInvocation(InvocationPlugin):
+    name = "shared"
+    def create(self): return InvocationCreator.from_any(on_start=lambda *_args: None, on_completed=lambda _context: "invocation")
+""",
+        encoding="utf-8",
+    )
+    readers = PageReaderPluginRegistry(tmp_path)
+    invocations = InvocationPluginRegistry(tmp_path)
+
+    assert readers.list_plugins() == ("reader-two", "shared")
+    assert invocations.list_plugins() == ("shared",)
+    assert readers.load("shared").read(cast(Page, object()), PageReaderContext()) == "reader"
+    assert invocations.load("shared").on_completed(cast(Page, object()), InvocationContext()) == "invocation"
+
+
 def test_reader_plugin_registry_fetches_source_without_executing_it(tmp_path: Path):
     source = """
+from fairybrowser.plugins.readers import PageReaderPlugin
 raise RuntimeError("fetch must not execute plugin code")
 
-class SourcePlugin:
+class SourcePlugin(PageReaderPlugin):
     name = "source"
 """
     plugin_directory = tmp_path / "registry"
@@ -117,7 +195,9 @@ def test_page_reader_creator_normalizes_callback_signatures():
 def test_reader_plugin_loader_rejects_missing_and_invalid_plugins(tmp_path: Path):
     (tmp_path / "invalid.py").write_text(
         """
-class Plugin:
+from fairybrowser.plugins.readers import PageReaderPlugin
+
+class Plugin(PageReaderPlugin):
     name = "invalid"
     def create_reader(self): return object()
 """,
@@ -129,14 +209,16 @@ class Plugin:
         loader.load("../invalid")
     with pytest.raises(PageReaderPluginNotFoundError):
         loader.load("missing")
-    with pytest.raises(InvalidPageReaderPluginError, match="callable create"):
+    with pytest.raises(InvalidPageReaderPluginError, match="directly inherit"):
         loader.load("invalid")
 
 
 def test_reader_plugin_loader_rejects_invalid_reader_result(tmp_path: Path):
     (tmp_path / "invalid-result.py").write_text(
         """
-class Plugin:
+from fairybrowser.plugins.readers import PageReaderPlugin
+
+class Plugin(PageReaderPlugin):
     name = "bad-result"
     def create(self): return object()
 """,
@@ -160,7 +242,9 @@ def test_reader_plugin_loader_rejects_duplicate_names(tmp_path: Path):
 def test_reader_plugin_loader_wraps_plugin_creation_errors(tmp_path: Path):
     (tmp_path / "broken.py").write_text(
         """
-class Plugin:
+from fairybrowser.plugins.readers import PageReaderPlugin
+
+class Plugin(PageReaderPlugin):
     name = "broken"
     def create(self): raise RuntimeError("failure")
 """,
@@ -206,10 +290,10 @@ def test_reader_plugin_registry_installs_example(tmp_path: Path):
 
 def test_reader_plugin_registry_reads_selected_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     source = """
-from fairybrowser.plugins.readers import PageReaderCreator
+from fairybrowser.plugins.readers import PageReaderCreator, PageReaderPlugin
 
 
-class SamplePlugin:
+class SamplePlugin(PageReaderPlugin):
     name = "sample"
 
     def create(self):

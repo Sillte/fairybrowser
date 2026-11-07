@@ -5,7 +5,11 @@ from importlib.resources import files
 from pathlib import Path
 
 from fairybrowser.models import BrowserInfo
-from fairybrowser.plugins.readers.exceptions import PageReaderPluginError, PageReaderPluginNotFoundError
+from fairybrowser.plugins.readers.exceptions import (
+    InvalidPageReaderPluginError,
+    PageReaderPluginError,
+    PageReaderPluginNotFoundError,
+)
 from fairybrowser.plugins.readers.executor import PageReaderExecutor
 from fairybrowser.plugins.readers.loader import PageReaderPluginLoader
 from fairybrowser.plugins.readers.models import PageReaderProtocol
@@ -65,13 +69,21 @@ class PageReaderPluginRegistry:
             return False
         return True
 
-    def install(self, source: Path | str, *, overwrite: bool = False) -> Path:
-        """Install a trusted plugin from a source Path or Python source string.
+    def install(
+        self,
+        source: Path | str,
+        *,
+        overwrite: bool = False,
+        filename: str | None = None,
+    ) -> Path:
+        """Install a trusted source file containing one or more reader plugins.
 
-        Validation executes the plugin module, its class constructor, and its create method.
-        String arguments are always treated as source code. Do not expose this developer utility
-        as an installation flow for unknown users.
+        Validation executes the plugin module, its plugin class constructors, and their create methods.
+        String arguments are always treated as source code. A filename is required for a source string
+        containing multiple reader plugins. Do not expose this developer utility as an installation
+        flow for unknown users.
         """
+        source_path: Path | None = None
         if isinstance(source, Path):
             source_path = Path(source).expanduser()
             if not source_path.is_file():
@@ -86,19 +98,52 @@ class PageReaderPluginRegistry:
         with tempfile.TemporaryDirectory(prefix=".install-", dir=self.plugin_directory) as temporary_directory:
             staged_source = Path(temporary_directory) / "plugin.py"
             staged_source.write_bytes(source_bytes)
-            plugin_name = self._loader.get_plugin_name(staged_source)
-            existing_path = self._loader.find_plugin_path(plugin_name)
-            destination = existing_path if existing_path is not None else self.plugin_directory / f"{plugin_name}.py"
+            plugin_names = self._loader.get_plugin_names(staged_source)
+            for plugin_name in plugin_names:
+                self._loader._load_plugin_file(staged_source, plugin_name)
+
+            existing_paths = {
+                path for name in plugin_names if (path := self._loader.find_plugin_path(name)) is not None
+            }
+            if len(existing_paths) > 1:
+                raise InvalidPageReaderPluginError("Cannot overwrite plugins stored in different source files together")
+            existing_path = next(iter(existing_paths), None)
+            if filename is None:
+                if existing_path is not None:
+                    filename = existing_path.name
+                elif len(plugin_names) == 1:
+                    filename = f"{plugin_names[0]}.py"
+                elif source_path is not None:
+                    filename = source_path.name
+                else:
+                    raise ValueError("filename is required when installing multiple reader plugins from source text")
+            self._validate_install_filename(filename)
+            destination = self.plugin_directory / filename
+            if existing_path is not None and not overwrite:
+                raise FileExistsError(existing_path)
+            if existing_path is not None and destination != existing_path:
+                raise InvalidPageReaderPluginError(
+                    f"Use the existing bundle filename {existing_path.name!r} when overwriting these plugins"
+                )
             if destination.exists() and not overwrite:
                 raise FileExistsError(destination)
 
-            self._loader._load_plugin_file(staged_source, plugin_name)
             if overwrite:
                 os.replace(staged_source, destination)
             else:
                 os.link(staged_source, destination)
 
         return destination
+
+    @staticmethod
+    def _validate_install_filename(filename: str) -> None:
+        path = Path(filename)
+        if (
+            path.name != filename
+            or path.suffix != ".py"
+            or not PageReaderPluginLoader.is_valid_name(path.stem)
+        ):
+            raise ValueError("filename must be a valid .py filename without a directory component")
 
     def read(
         self,
