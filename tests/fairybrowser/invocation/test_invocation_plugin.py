@@ -67,6 +67,23 @@ def test_plugin_registry_loads_structural_protocol_plugin(tmp_path: Path):
     assert callable(invocation.start)
 
 
+def test_plugin_registry_fetches_source_without_executing_it(tmp_path: Path):
+    source = '''
+raise RuntimeError("fetch must not execute plugin code")
+
+class SourcePlugin:
+    name = "source"
+'''
+    plugin_directory = tmp_path / "registry"
+    plugin_directory.mkdir()
+    (plugin_directory / "different-filename.py").write_text(source, encoding="utf-8")
+    registry = InvocationPluginRegistry(plugin_directory)
+
+    assert registry.fetch("source") == source
+    with pytest.raises(InvocationPluginNotFoundError):
+        registry.fetch("missing")
+
+
 def test_plugin_registry_verifies_and_checks_executability(tmp_path: Path):
     (tmp_path / "valid.py").write_text(_valid_plugin_source("valid"), encoding="utf-8")
     registry = InvocationPluginRegistry(tmp_path)
@@ -185,27 +202,35 @@ class Plugin:
     assert isinstance(error.value.__cause__, RuntimeError)
 
 
-@pytest.mark.parametrize("as_string", [False, True])
-def test_plugin_registry_installs_plugin_file(tmp_path: Path, as_string: bool):
+def test_plugin_registry_installs_plugin_file(tmp_path: Path):
     source_file = tmp_path / "source-filename.py"
     source_file.write_text(_valid_plugin_source("file", "declared-id"), encoding="utf-8")
-    source: Path | str = str(source_file) if as_string else source_file
     registry = InvocationPluginRegistry(tmp_path / "registry")
 
-    installed = registry.install(source)
+    installed = registry.install(source_file)
 
     assert installed == tmp_path / "registry" / "declared-id.py"
     assert registry.list_plugins() == ("declared-id",)
     assert callable(registry.load("declared-id").on_completed)
 
 
-def test_plugin_registry_makes_example(tmp_path: Path):
+def test_plugin_registry_installs_source_string_ending_in_py(tmp_path: Path):
+    source = _valid_plugin_source("source", "inline").rstrip() + '\nmarker = ".py"'
+    registry = InvocationPluginRegistry(tmp_path / "registry")
+
+    installed = registry.install(source)
+
+    assert installed == tmp_path / "registry" / "inline.py"
+    assert registry.fetch("inline") == source
+
+
+def test_plugin_registry_installs_example(tmp_path: Path):
     plugin_directory = tmp_path / "registry"
     plugin_directory.mkdir()
-    (plugin_directory / "example.py").write_text("old content", encoding="utf-8")
+    (plugin_directory / "example.py").write_text(_valid_plugin_source("old", "example"), encoding="utf-8")
     registry = InvocationPluginRegistry(plugin_directory)
 
-    example_path = registry.make_example()
+    example_path = registry.install_example()
     invocation = registry.load("example")
     context = InvocationContext()
 
@@ -255,13 +280,6 @@ def test_plugin_registry_does_not_install_invalid_source(tmp_path: Path):
         registry.install("value = 1")
 
     assert list((tmp_path / "registry").glob("*.py")) == []
-
-
-def test_plugin_registry_treats_py_suffixed_string_as_path(tmp_path: Path):
-    registry = InvocationPluginRegistry(tmp_path / "registry")
-
-    with pytest.raises(FileNotFoundError):
-        registry.install(str(tmp_path / "missing.py"))
 
 
 def test_plugin_registry_invokes_loaded_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -1,16 +1,17 @@
 import os
 import tempfile
+from importlib.resources import files
 from pathlib import Path
 
 from fairybrowser.models import BrowserInfo
-from fairybrowser.plugins.reader.exceptions import ReaderPluginError
-from fairybrowser.plugins.reader.loader import ReaderPluginLoader
-from fairybrowser.plugins.reader.models import ReaderProtocol
+from fairybrowser.plugins.readers.exceptions import PageReaderPluginError, PageReaderPluginNotFoundError
+from fairybrowser.plugins.readers.loader import PageReaderPluginLoader
+from fairybrowser.plugins.readers.models import PageReaderProtocol
 from fairybrowser.runners import sync_browser
 from fairybrowser.storage import StoragePathSolver
 
 
-class ReaderPluginRegistry:
+class PageReaderPluginRegistry:
     """Discover, load, and use named reader plugins."""
 
     def __init__(self, plugin_directory: Path | None = None) -> None:
@@ -19,40 +20,31 @@ class ReaderPluginRegistry:
             if plugin_directory is not None
             else StoragePathSolver().reader_plugins_directory()
         )
-        self._loader = ReaderPluginLoader(self.plugin_directory)
+        self._loader = PageReaderPluginLoader(self.plugin_directory)
 
     def list_plugins(self) -> tuple[str, ...]:
         """List installed plugin names without importing their code."""
         return self._loader.list_plugins()
 
-    def make_example(self) -> Path:
-        """Write a simple reader plugin example to the plugin directory."""
-        self.plugin_directory.mkdir(parents=True, exist_ok=True)
-        example_path = self.plugin_directory / "example.py"
-        example_path.write_text(
-            '''class ExampleReaderPlugin:
-    name = "example"
+    def fetch(self, name: str) -> str:
+        """Return a plugin's Python source without importing or executing it."""
+        if not self._loader.is_valid_name(name):
+            raise PageReaderPluginNotFoundError(f"Invalid reader plugin name: {name!r}")
+        plugin_path = self._loader.find_plugin_path(name)
+        if plugin_path is None:
+            raise PageReaderPluginNotFoundError(f"Reader plugin not found: {name}")
+        return plugin_path.read_text(encoding="utf-8")
 
-    def create(self):
-        return ExampleReader()
+    def install_example(self) -> Path:
+        """Install the bundled reader example, replacing any plugin named 'example'."""
+        source = files("fairybrowser.plugins.readers").joinpath("example.py").read_text(encoding="utf-8")
+        return self.install(source, overwrite=True)
 
-
-class ExampleReader:
-    def select(self, pages):
-        return pages[0] if pages else None
-
-    def read(self, page):
-        return page.title()
-''',
-            encoding="utf-8",
-        )
-        return example_path
-
-    def load(self, name: str) -> ReaderProtocol:
+    def load(self, name: str) -> PageReaderProtocol:
         """Load a trusted local plugin and create its reader."""
         return self._loader.load(name)
 
-    def verify(self, name: str) -> ReaderProtocol:
+    def verify(self, name: str) -> PageReaderProtocol:
         """Load a trusted local plugin and validate its reader contract.
 
         This executes plugin module code, its class constructor, and its create method.
@@ -68,17 +60,18 @@ class ExampleReader:
         """
         try:
             self.verify(name)
-        except ReaderPluginError:
+        except PageReaderPluginError:
             return False
         return True
 
     def install(self, source: Path | str, *, overwrite: bool = False) -> Path:
-        """Install a trusted plugin whose class declares its own name.
+        """Install a trusted plugin from a source Path or Python source string.
 
         Validation executes the plugin module, its class constructor, and its create method.
-        Do not expose this developer utility as an installation flow for unknown users.
+        String arguments are always treated as source code. Do not expose this developer utility
+        as an installation flow for unknown users.
         """
-        if isinstance(source, Path) or (isinstance(source, str) and source.endswith(".py")):
+        if isinstance(source, Path):
             source_path = Path(source).expanduser()
             if not source_path.is_file():
                 raise FileNotFoundError(source_path)

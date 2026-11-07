@@ -19,28 +19,28 @@ By default, plugin files are stored under the application data directory resolve
 
 A plugin class has a literal string `name` class attribute and a `create()` method. For invocation plugins, `create()` returns an `InvocationProtocol` with `select(pages) -> Page`, `start(input, page, context)`, a `listeners` property, and `on_completed(page, context) -> result`.
 
-For reader plugins, `create()` returns a `ReaderProtocol` with:
+For reader plugins, `create()` returns a `PageReaderProtocol` with:
 
 ```python
-class ReaderProtocol(Protocol):
+class PageReaderProtocol(Protocol):
     def select(self, pages: Sequence[Page]) -> Page | None: ...
     def read(self, page: Page) -> str: ...
 ```
 
-Reader registries return `None` when the selected reader finds no suitable page. Runtime checks confirm required members are present and callable; they do not guarantee plugin behavior or successful page operations.
+`PageReaderCreator.from_any(read, select=None)` provides a callback-based `PageReaderProtocol` implementation; by default it selects the first page, or returns `None` for an empty page sequence. Reader registries also return `None` when the selected reader finds no suitable page. Runtime checks confirm required members are present and callable; they do not guarantee plugin behavior or successful page operations.
 
 ## Main usage
 
 ```python
 from fairybrowser.models import BrowserInfo
 from fairybrowser.plugins.invocation import InvocationPluginRegistry
-from fairybrowser.plugins.reader import ReaderPluginRegistry
+from fairybrowser.plugins.readers import PageReaderPluginRegistry
 
 invocations = InvocationPluginRegistry()
 result = invocations.invoke("example", input=payload)
 
-readers = ReaderPluginRegistry()
+readers = PageReaderPluginRegistry()
 text = readers.read("example", BrowserInfo())  # str, or None when no page is selected
 ```
 
-Both registries provide `list_plugins()`, `load(name)`, `verify(name)`, `install(source, overwrite=False)`, and `make_example()`. `make_example()` creates the plugin directory if needed, writes a small, loadable plugin to `example.py`, overwrites any existing file at that path, and returns the file path. The generated plugin is specific to the registry type: an invocation example for `InvocationPluginRegistry` or a reader example for `ReaderPluginRegistry`. `InvocationPluginRegistry` also provides `can_execute(name)` and `invoke(name, input=...)`; `ReaderPluginRegistry` provides `can_read(name)` and `read(name, browser_info)`. `read()` opens the managed browser with `sync_browser`, passes all open pages across its contexts to the reader's `select()`, then reads the selected page; it returns `None` when no page is selected. `install()` accepts a `.py` path or Python source string and validates it by executing the plugin; overwriting an existing plugin requires `overwrite=True`.
+Both registries provide `list_plugins()`, `load(name)`, `verify(name)`, `fetch(name)`, `install(source, overwrite=False)`, and `install_example()`. `fetch()` returns the source code of the named plugin as a string without importing or executing it. `install_example()` reads the registry type's bundled `example.py` template and installs it through `install()` for validation, replacing any existing plugin named `example`; it returns the installed file path. `InvocationPluginRegistry` also provides `can_execute(name)` and `invoke(name, input=...)`; `PageReaderPluginRegistry` provides `can_read(name)` and `read(name, browser_info)`. `read()` opens the managed browser with `sync_browser`, passes all open pages across its contexts to the reader's `select()`, then reads the selected page; it returns `None` when no page is selected. `install()` accepts a `Path` to a `.py` file or a Python source string and validates it by executing the plugin. String arguments are always treated as source code, even when they end in `.py`; overwriting an existing plugin requires `overwrite=True`.

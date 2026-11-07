@@ -1,11 +1,12 @@
 import os
 import tempfile
 from collections.abc import Mapping
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 from fairybrowser.invocation.models import InvocationConfiguration, InvocationExecutor, InvocationProtocol
-from fairybrowser.plugins.invocation.exceptions import InvocationPluginError
+from fairybrowser.plugins.invocation.exceptions import InvocationPluginError, InvocationPluginNotFoundError
 from fairybrowser.plugins.invocation.loader import InvocationPluginLoader
 from fairybrowser.storage import StoragePathSolver
 
@@ -25,26 +26,19 @@ class InvocationPluginRegistry:
         """List installed plugin names without importing their code."""
         return self._loader.list_plugins()
 
-    def make_example(self) -> Path:
-        """Write a simple invocation plugin example to the plugin directory."""
-        self.plugin_directory.mkdir(parents=True, exist_ok=True)
-        example_path = self.plugin_directory / "example.py"
-        example_path.write_text(
-            '''from fairybrowser.invocation import InvocationCreator
+    def fetch(self, name: str) -> str:
+        """Return a plugin's Python source without importing or executing it."""
+        if not self._loader.is_valid_name(name):
+            raise InvocationPluginNotFoundError(f"Invalid invocation plugin name: {name!r}")
+        plugin_path = self._loader.find_plugin_path(name)
+        if plugin_path is None:
+            raise InvocationPluginNotFoundError(f"Invocation plugin not found: {name}")
+        return plugin_path.read_text(encoding="utf-8")
 
-
-class ExampleInvocationPlugin:
-    name = "example"
-
-    def create(self):
-        return InvocationCreator.from_any(
-            on_start=lambda _input, _page, context: context.complete(),
-            on_completed=lambda _page, _context: "Example invocation completed",
-        )
-''',
-            encoding="utf-8",
-        )
-        return example_path
+    def install_example(self) -> Path:
+        """Install the bundled invocation example, replacing any plugin named 'example'."""
+        source = files("fairybrowser.plugins.invocation").joinpath("example.py").read_text(encoding="utf-8")
+        return self.install(source, overwrite=True)
 
     def load(self, name: str) -> InvocationProtocol[Any, Any]:
         """Load a trusted local plugin and create its Invocation."""
@@ -71,12 +65,13 @@ class ExampleInvocationPlugin:
         return True
 
     def install(self, source: Path | str, *, overwrite: bool = False) -> Path:
-        """Install a trusted plugin whose class declares its own name.
+        """Install a trusted plugin from a source Path or Python source string.
 
         Validation executes the plugin module, its class constructor, and its create method.
-        Do not expose this developer utility as an installation flow for unknown users.
+        String arguments are always treated as source code. Do not expose this developer utility
+        as an installation flow for unknown users.
         """
-        if isinstance(source, Path) or (isinstance(source, str) and source.endswith(".py")):
+        if isinstance(source, Path):
             source_path = Path(source).expanduser()
             if not source_path.is_file():
                 raise FileNotFoundError(source_path)

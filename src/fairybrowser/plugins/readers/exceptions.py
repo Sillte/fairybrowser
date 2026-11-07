@@ -1,18 +1,18 @@
-class ReaderPluginError(Exception):
+class PageReaderPluginError(Exception):
     """Base exception for reader plugin errors."""
 
 
-class ReaderPluginNotFoundError(ReaderPluginError):
+class PageReaderPluginNotFoundError(PageReaderPluginError):
     """Raised when a named reader plugin cannot be found."""
 
 
-class InvalidReaderPluginError(ReaderPluginError):
+class InvalidPageReaderPluginError(PageReaderPluginError):
     """Raised when a plugin does not implement the reader plugin contract."""
 
 
-class DuplicateReaderPluginNameError(InvalidReaderPluginError):
+class DuplicatePageReaderPluginNameError(InvalidPageReaderPluginError):
     """Raised when multiple plugin files declare the same name."""
 
 
-class ReaderPluginLoadError(ReaderPluginError):
+class PageReaderPluginLoadError(PageReaderPluginError):
     """Raised when loading a plugin module or creating its reader fails."""
