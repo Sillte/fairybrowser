@@ -11,6 +11,7 @@ from fairybrowser.models import BrowserInfo
 from fairybrowser.plugins.readers import (
     DuplicatePageReaderPluginNameError,
     InvalidPageReaderPluginError,
+    PageReaderContext,
     PageReaderCreator,
     PageReaderPluginLoader,
     PageReaderPluginLoadError,
@@ -22,19 +23,14 @@ from fairybrowser.storage import StoragePathSolver
 
 def _valid_plugin_source(name: str = "sample") -> str:
     return f"""
+from fairybrowser.plugins.readers import PageReaderCreator
+
+
 class SamplePlugin:
     name = {name!r}
 
     def create(self):
-        return SampleReader()
-
-
-class SampleReader:
-    def select(self, pages):
-        return pages[0] if pages else None
-
-    def read(self, page):
-        return "read"
+        return PageReaderCreator.from_any(read=lambda page: "read")
 """
 
 
@@ -64,10 +60,11 @@ def test_reader_plugin_loader_loads_named_reader(tmp_path: Path):
 
     reader = loader.load("stable-id")
     first_page = cast(Page, object())
+    context = PageReaderContext()
 
-    assert reader.select([first_page]) is first_page
-    assert reader.select([]) is None
-    assert reader.read(first_page) == "read"
+    assert reader.select([first_page], context) is first_page
+    assert reader.select([], context) is None
+    assert reader.read(first_page, context) == "read"
 
 
 def test_reader_plugin_registry_fetches_source_without_executing_it(tmp_path: Path):
@@ -87,7 +84,7 @@ class SourcePlugin:
         registry.fetch("missing")
 
 
-def test_page_reader_creator_uses_callbacks():
+def test_page_reader_creator_normalizes_callback_signatures():
     class FakePage:
         def __init__(self, title: str):
             self._title = title
@@ -97,17 +94,23 @@ def test_page_reader_creator_uses_callbacks():
 
     first_page = cast(Page, FakePage("first"))
     second_page = cast(Page, FakePage("second"))
+    context = PageReaderContext(options={"selection": "last"})
+    with pytest.raises(TypeError):
+        cast(dict[str, object], context.options)["selection"] = "first"
     reader = PageReaderCreator.from_any(read=lambda page: page.title())
-    custom_reader = PageReaderCreator.from_any(
-        read=lambda page: page.title(),
-        select=lambda pages: pages[-1],
+    context_reader = PageReaderCreator.from_any(
+        read=lambda page, reader_context: f"{page.title()}:{reader_context.options['selection']}",
+        select=lambda pages, reader_context: pages[-1]
+        if reader_context.options["selection"] == "last"
+        else pages[0],
     )
 
-    assert reader.select([first_page, second_page]) is first_page
-    assert reader.select([]) is None
-    assert reader.read(second_page) == "second"
-    assert custom_reader.select([first_page, second_page]) is second_page
-    assert custom_reader.select([]) is None
+    assert reader.select([first_page, second_page], context) is first_page
+    assert reader.select([], context) is None
+    assert reader.read(second_page, context) == "second"
+    assert context_reader.select([first_page, second_page], context) is second_page
+    assert context_reader.select([], context) is None
+    assert context_reader.read(second_page, context) == "second:last"
 
 
 def test_reader_plugin_loader_rejects_missing_and_invalid_plugins(tmp_path: Path):
@@ -194,26 +197,29 @@ def test_reader_plugin_registry_installs_example(tmp_path: Path):
             return "Example page"
 
     page = cast(Page, FakePage())
+    context = PageReaderContext()
     assert example_path == plugin_directory / "example.py"
-    assert reader.select([page]) is page
-    assert reader.read(page) == "Example page"
+    assert reader.select([page], context) is page
+    assert reader.read(page, context) == "Example page"
 
 
 def test_reader_plugin_registry_reads_selected_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     source = """
+from fairybrowser.plugins.readers import PageReaderCreator
+
+
 class SamplePlugin:
     name = "sample"
 
     def create(self):
-        return SampleReader()
+        def select(pages, context):
+            context.state["selected_label"] = pages[-1].label
+            return pages[-1] if pages else None
 
+        def read(page, context):
+            return f"{page.label}:{context.state['selected_label']}:{context.options['suffix']}"
 
-class SampleReader:
-    def select(self, pages):
-        return pages[-1] if pages else None
-
-    def read(self, page):
-        return page.label
+        return PageReaderCreator.from_any(read=read, select=select)
 """
     (tmp_path / "reader.py").write_text(source, encoding="utf-8")
     registry = PageReaderPluginRegistry(tmp_path)
@@ -244,10 +250,10 @@ class SampleReader:
 
     monkeypatch.setattr("fairybrowser.plugins.readers.registry.sync_browser", fake_sync_browser)
 
-    assert registry.read("sample", browser_info) == "second"
+    assert registry.read("sample", browser_info, options={"suffix": "read"}) == "second:second:read"
 
     browser.contexts = [SimpleNamespace(pages=[])]
-    assert registry.read("sample", browser_info) is None
+    assert registry.read("sample", browser_info, options={"suffix": "read"}) is None
 
 
 def test_plugin_directories_are_nested_under_application_data_plugins(tmp_path: Path):
