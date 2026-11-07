@@ -1,5 +1,5 @@
-from fairybrowser.invocation import InvocationCreator
 from fairybrowser.plugins import InvocationPlugin
+from fairybrowser.plugins.invocation import InvocationCreator
 
 
 class ExampleInvocationPlugin(InvocationPlugin):

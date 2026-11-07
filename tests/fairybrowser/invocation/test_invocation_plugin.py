@@ -7,13 +7,19 @@ from unittest.mock import MagicMock
 import pytest
 from playwright.sync_api import Page
 
-from fairybrowser.invocation import InvocationContext, InvocationCreator
+from fairybrowser.invocation import InvocationContext, InvocationCreator, InvocationExecutor
 from fairybrowser.plugins.invocation import (
     DuplicateInvocationPluginNameError,
     InvalidInvocationPluginError,
     InvocationPluginLoadError,
     InvocationPluginNotFoundError,
     InvocationPluginRegistry,
+)
+from fairybrowser.plugins.invocation import (
+    InvocationCreator as PluginInvocationCreator,
+)
+from fairybrowser.plugins.invocation import (
+    InvocationExecutor as PluginInvocationExecutor,
 )
 
 
@@ -33,6 +39,11 @@ class SamplePlugin(InvocationPlugin):
             listeners=FetchTextStreamEventListener.from_any(lambda _event: None),
         )
 '''
+
+
+def test_invocation_helpers_are_reexported_from_plugin_package():
+    assert PluginInvocationCreator is InvocationCreator
+    assert PluginInvocationExecutor is InvocationExecutor
 
 
 def test_plugin_registry_lists_literal_names_without_importing_plugin_code(tmp_path: Path):
