@@ -1,4 +1,4 @@
-from fairybrowser.invocation import InvocationCreator, InvocationExecutor
+from fairybrowser.invocation import InvocationContext, InvocationCreator, InvocationExecutor
 from fairybrowser.plugins.invocation.exceptions import (
     DuplicateInvocationPluginNameError,
     InvalidInvocationPluginError,
@@ -12,6 +12,7 @@ from fairybrowser.plugins.invocation.registry import InvocationPluginRegistry
 
 __all__ = [
     "DuplicateInvocationPluginNameError",
+    "InvocationContext",
     "InvocationCreator",
     "InvocationExecutor",
     "InvalidInvocationPluginError",

@@ -16,6 +16,9 @@ from fairybrowser.plugins.invocation import (
     InvocationPluginRegistry,
 )
 from fairybrowser.plugins.invocation import (
+    InvocationContext as PluginInvocationContext,
+)
+from fairybrowser.plugins.invocation import (
     InvocationCreator as PluginInvocationCreator,
 )
 from fairybrowser.plugins.invocation import (
@@ -42,6 +45,7 @@ class SamplePlugin(InvocationPlugin):
 
 
 def test_invocation_helpers_are_reexported_from_plugin_package():
+    assert PluginInvocationContext is InvocationContext
     assert PluginInvocationCreator is InvocationCreator
     assert PluginInvocationExecutor is InvocationExecutor
 

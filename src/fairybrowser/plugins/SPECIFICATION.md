@@ -55,6 +55,7 @@ class PageReaderProtocol(Protocol):
 ```python
 from fairybrowser.models import BrowserInfo
 from fairybrowser.plugins.invocation import (
+    InvocationContext,
     InvocationCreator,
     InvocationExecutor,
     InvocationPlugin,
