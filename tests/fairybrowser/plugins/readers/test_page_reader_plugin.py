@@ -13,6 +13,7 @@ from fairybrowser.plugins.readers import (
     InvalidPageReaderPluginError,
     PageReaderContext,
     PageReaderCreator,
+    PageReaderExecutor,
     PageReaderPluginLoader,
     PageReaderPluginLoadError,
     PageReaderPluginNotFoundError,
@@ -248,8 +249,10 @@ class SamplePlugin:
         assert info == browser_info
         yield browser
 
-    monkeypatch.setattr("fairybrowser.plugins.readers.registry.sync_browser", fake_sync_browser)
+    monkeypatch.setattr("fairybrowser.plugins.readers.executor.sync_browser", fake_sync_browser)
 
+    reader = registry.load("sample")
+    assert PageReaderExecutor.from_any(reader).read(browser_info, options={"suffix": "read"}) == "second:second:read"
     assert registry.read("sample", browser_info, options={"suffix": "read"}) == "second:second:read"
 
     browser.contexts = [SimpleNamespace(pages=[])]

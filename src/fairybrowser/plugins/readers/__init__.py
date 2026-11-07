@@ -7,6 +7,7 @@ from fairybrowser.plugins.readers.exceptions import (
     PageReaderPluginLoadError,
     PageReaderPluginNotFoundError,
 )
+from fairybrowser.plugins.readers.executor import PageReaderExecutor
 from fairybrowser.plugins.readers.loader import PageReaderPluginLoader
 from fairybrowser.plugins.readers.models import (
     PageReaderContext,
@@ -21,6 +22,7 @@ __all__ = [
     "InvalidPageReaderPluginError",
     "PageReaderContext",
     "PageReaderCreator",
+    "PageReaderExecutor",
     "PageReaderPluginError",
     "PageReaderPluginLoadError",
     "PageReaderPluginLoader",

@@ -6,9 +6,9 @@ from pathlib import Path
 
 from fairybrowser.models import BrowserInfo
 from fairybrowser.plugins.readers.exceptions import PageReaderPluginError, PageReaderPluginNotFoundError
+from fairybrowser.plugins.readers.executor import PageReaderExecutor
 from fairybrowser.plugins.readers.loader import PageReaderPluginLoader
-from fairybrowser.plugins.readers.models import PageReaderContext, PageReaderProtocol
-from fairybrowser.runners import sync_browser
+from fairybrowser.plugins.readers.models import PageReaderProtocol
 from fairybrowser.storage import StoragePathSolver
 
 
@@ -109,19 +109,4 @@ class PageReaderPluginRegistry:
     ) -> str | None:
         """Read the selected page using per-call reader context and options."""
         reader = self.load(name)
-        context = PageReaderContext(options={} if options is None else options)
-        with sync_browser(info=browser_info) as browser:
-            pages = tuple(
-                page for browser_context in browser.contexts for page in browser_context.pages if not page.is_closed()
-            )
-            page = reader.select(pages, context)
-            if page is None:
-                return None
-            if page.is_closed() or not any(
-                page is candidate
-                for browser_context in browser.contexts
-                for candidate in browser_context.pages
-                if not candidate.is_closed()
-            ):
-                raise RuntimeError("The reader must select an open page from the managed browser.")
-            return reader.read(page, context)
+        return PageReaderExecutor(reader).read(browser_info, options=options)
