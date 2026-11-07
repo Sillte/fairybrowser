@@ -1,8 +1,8 @@
 from fairybrowser.devtools import DevtoolsService
 from fairybrowser.html_analysis.markdown_converter import (
-    ConverterProtocol,
     InputContext,
     MarkdownConverter,
+    NodeConverterProtocol,
     NodeProcessorProtocol,
     OutputContext,
 )
@@ -11,7 +11,7 @@ from fairybrowser.runners import sync_browser, sync_page
 
 __all__ = [
     "BrowserInfo",
-    "ConverterProtocol",
+    "NodeConverterProtocol",
     "DevtoolsService",
     "InputContext",
     "MarkdownConverter",

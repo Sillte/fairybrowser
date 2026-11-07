@@ -24,7 +24,7 @@ class OutputContext:
     end_node: LexborNode
 
 
-class ConverterProtocol(Protocol):
+class NodeConverterProtocol(Protocol):
     @property
     def tags(self) -> Sequence[str] | None: ...
 

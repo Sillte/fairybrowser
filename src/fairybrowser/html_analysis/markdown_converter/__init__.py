@@ -21,8 +21,8 @@ from fairybrowser.html_analysis.markdown_converter.converters import (
     TextConverter,
 )
 from fairybrowser.html_analysis.markdown_converter.models import (
-    ConverterProtocol,
     InputContext,
+    NodeConverterProtocol,
     NodeProcessorProtocol,
     OutputContext,
 )
@@ -30,7 +30,7 @@ from fairybrowser.html_analysis.markdown_converter.models import (
 from .processor import Processor
 
 __all__ = [
-    "ConverterProtocol",
+    "NodeConverterProtocol",
     "InputContext",
     "MarkdownConverter",
     "NodeProcessorProtocol",
@@ -41,9 +41,9 @@ __all__ = [
 class MarkdownConverter:
     def __init__(
         self,
-        converters: Sequence[ConverterProtocol] = tuple(),
+        converters: Sequence[NodeConverterProtocol] = tuple(),
         *,
-        basic_converters: Sequence[ConverterProtocol] | None = None,
+        basic_converters: Sequence[NodeConverterProtocol] | None = None,
     ) -> None:
         self._converters = converters
         if basic_converters is None:
@@ -51,7 +51,7 @@ class MarkdownConverter:
         self._basic_converters = basic_converters
 
     @classmethod
-    def _make_default_basic_converters(cls) -> Sequence[ConverterProtocol]:
+    def _make_default_basic_converters(cls) -> Sequence[NodeConverterProtocol]:
         return [
             HeadingConverter(),
             ParagraphConverter(),

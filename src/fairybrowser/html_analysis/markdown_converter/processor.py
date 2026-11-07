@@ -2,15 +2,15 @@ from typing import Sequence
 
 from selectolax.lexbor import LexborNode
 
-from fairybrowser.html_analysis.markdown_converter.models import ConverterProtocol, InputContext, OutputContext
+from fairybrowser.html_analysis.markdown_converter.models import InputContext, NodeConverterProtocol, OutputContext
 
 
 class Processor:
-    def __init__(self, converters: Sequence[ConverterProtocol]):
+    def __init__(self, converters: Sequence[NodeConverterProtocol]):
         self.converters = converters
 
-        self._tagged_converters: dict[str, list[ConverterProtocol]] = {}
-        self._unbounded_converters: list[ConverterProtocol] = []
+        self._tagged_converters: dict[str, list[NodeConverterProtocol]] = {}
+        self._unbounded_converters: list[NodeConverterProtocol] = []
 
         for converter in converters:
             tags = converter.tags
@@ -75,7 +75,7 @@ class Processor:
     def _select_converter(
         self,
         context: InputContext,
-    ) -> ConverterProtocol | None:
+    ) -> NodeConverterProtocol | None:
         node = context.current_node
 
         tag = node.tag or ""

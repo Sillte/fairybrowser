@@ -1,9 +1,9 @@
 from fairybrowser.html_analysis import (
-    ConverterProtocol,
     HtmlSimplificationMode,
     HTMLSimplifier,
     InputContext,
     MarkdownConverter,
+    NodeConverterProtocol,
     NodeProcessorProtocol,
     NodeProtectionRuleProtocol,
     OutputContext,
@@ -20,7 +20,7 @@ def test_html_analysis_exports_supported_api():
     assert "<script>" not in simplify_html_for_playwright("<script>x</script>")
     assert "onclick" not in clean_html('<button onclick="x">go</button>')
     assert HtmlSimplificationMode is not None
-    assert ConverterProtocol is not None
+    assert NodeConverterProtocol is not None
     assert InputContext is not None
     assert NodeProcessorProtocol is not None
     assert OutputContext is not None

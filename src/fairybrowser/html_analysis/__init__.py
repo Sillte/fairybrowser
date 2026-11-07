@@ -5,9 +5,9 @@ from .html_simplifier import (
     SubtreeProtectionRuleProtocol,
 )
 from .markdown_converter import (
-    ConverterProtocol,
     InputContext,
     MarkdownConverter,
+    NodeConverterProtocol,
     NodeProcessorProtocol,
     OutputContext,
 )
@@ -18,7 +18,7 @@ from .simplify_html import (
 )
 
 __all__ = [
-    "ConverterProtocol",
+    "NodeConverterProtocol",
     "HTMLSimplifier",
     "HtmlSimplificationMode",
     "InputContext",
